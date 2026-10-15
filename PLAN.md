@@ -1,20 +1,23 @@
 # Plan
 
 ## En cours : protocole de comparaison contrôlé, en mode rapide
-`QUICK = True` dans `parametres.py` (10 000 points de Gauss, 6 cycles, EPS 0.1 -> 0.032,
-P = 3 au cycle 4) : quelques minutes par run. La question est qualitative : le PINN
-trouve-t-il la paroi isolante de la référence SIMP ?
+`QUICK = True` dans `parametres.py` : arrêt à l'arrivée à P = 3 (5 cycles, EPS ~ 0.04),
+résolution et budget par cycle inchangés, ~10-12 min par run. La question est qualitative :
+le PINN trouve-t-il la paroi isolante de la référence SIMP ?
+(Un premier essai avec 10 000 points et 10 fois moins d'évaluations n'a pas convergé :
+J/J_ref ~ 2, gris ~ 0.85. Sur GPU, le coût d'une évaluation dépend peu du nombre de points.)
 
-Un dossier par run, une console Python neuve par run, une seule modification par run :
+Un dossier par run, une console Python neuve par run, une seule modification par run.
+Vérifier la graine dans l'en-tête du journal.
 
 | Run | Réglages (en plus de QUICK = True) | Question |
 |---|---|---|
-| R0 | SEED = 1234 | point de départ |
+| R0 | SEED = 3 | point de départ |
 | R1 | SEED = 0, puis SEED = 69 | bruit dû à la graine |
-| R2 | SEED = 1234, RHO_SCALE_BY_EPS = False | effet de la paramétrisation de rho |
-| R3 | SEED = 1234, LAMBDA = 1e-3 | effet de lambda |
+| R2 | SEED = 3, RHO_SCALE_BY_EPS = False | effet de la paramétrisation de rho |
+| R3 | SEED = 3, LAMBDA = 1e-3 | effet de lambda |
 
-À relever (dernier cycle, `5_shape_s<SEED>.npz` et figure) : paroi isolante présente ou non,
+À relever (cycle 4, `4_shape_s<SEED>.npz` et figure) : paroi isolante présente ou non,
 J_DF/J_ref et J_DF seuillé/J_ref (comparer à la référence SIMP r = 0.05 : 0.207 / 0.194).
 
 Référence SIMP (`reference_simp_df.py`, évaluateur DF du PINN) :

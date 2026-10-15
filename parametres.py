@@ -46,17 +46,15 @@ OUT_SHAPE = f"shape_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sa
 LOG_FILE = f"log_phase_field_pinn_2d_s{SEED}.txt"   # copie de toute la sortie console
 
 # ----------------------------------------------------------------------------
-# Mode rapide : tester une intuition en quelques minutes (topologie, ordre de grandeur de J).
-# La topologie se décide pendant la montée en P ; une résolution grossière suffit pour la voir.
+# Mode rapide : tester une intuition sur la topologie (~10-12 min au lieu de ~45 min).
+# La topologie se décide pendant la montée en P : on s'arrête à l'arrivée à P = P_MAX
+# (cycle 4). Résolution et budget par cycle inchangés : sur GPU, une évaluation coûte
+# presque autant avec 10 000 points qu'avec 90 000, et couper les évaluations empêche
+# la convergence (essai précédent : J/J_ref ~ 2, gris ~ 0.85).
 # ----------------------------------------------------------------------------
 QUICK = False
 if QUICK:
-    N_GAUSS = 100             # 10 000 points (au lieu de 90 000)
-    N_GAUSS_JX, N_GAUSS_JY = 20, 60
-    N_CYCLES = 6              # EPS 0.1 -> 0.032 (>= 2 x espacement de Gauss ~0.016), P = 3 au cycle 4
-    ADAM_ITERS = 1000
-    LBFGS_CHUNK = 500
-    MAX_CHUNKS = 3
-    MAX_CHUNKS_RAMP = 3
+    N_CYCLES = 5              # cycles 0-3 : P 1 -> 2.5, cycle 4 : P = 3, EPS ~ 0.04
+    MAX_CHUNKS = 3            # le cycle à P = P_MAX est plafonné comme les autres
     N_FD = 199
     N_PLOT = 101
