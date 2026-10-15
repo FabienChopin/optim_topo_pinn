@@ -44,3 +44,19 @@ N_FD = 499                # noeuds intérieurs par direction pour la vérificati
 OUT_FIG_FD = f"comparaison_u_DF_s{SEED}.png"
 OUT_SHAPE = f"shape_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sans réseau)
 LOG_FILE = f"log_phase_field_pinn_2d_s{SEED}.txt"   # copie de toute la sortie console
+
+# ----------------------------------------------------------------------------
+# Mode rapide : tester une intuition en quelques minutes (topologie, ordre de grandeur de J).
+# La topologie se décide pendant la montée en P ; une résolution grossière suffit pour la voir.
+# ----------------------------------------------------------------------------
+QUICK = False
+if QUICK:
+    N_GAUSS = 100             # 10 000 points (au lieu de 90 000)
+    N_GAUSS_JX, N_GAUSS_JY = 20, 60
+    N_CYCLES = 6              # EPS 0.1 -> 0.032 (>= 2 x espacement de Gauss ~0.016), P = 3 au cycle 4
+    ADAM_ITERS = 1000
+    LBFGS_CHUNK = 500
+    MAX_CHUNKS = 3
+    MAX_CHUNKS_RAMP = 3
+    N_FD = 199
+    N_PLOT = 101

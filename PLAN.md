@@ -1,15 +1,21 @@
 # Plan
 
-## En cours : protocole de comparaison contrôlé
-Graine fixe (1234), une modification par run. Métrique principale : J_DF seuillé/J_ref et son
-volume, lus dans `10_shape_s<SEED>.npz`.
+## En cours : protocole de comparaison contrôlé, en mode rapide
+`QUICK = True` dans `parametres.py` (10 000 points de Gauss, 6 cycles, EPS 0.1 -> 0.032,
+P = 3 au cycle 4) : quelques minutes par run. La question est qualitative : le PINN
+trouve-t-il la paroi isolante de la référence SIMP ?
 
-| Run | Changement par rapport à R0 | Question |
+Un dossier par run, une console Python neuve par run, une seule modification par run :
+
+| Run | Réglages (en plus de QUICK = True) | Question |
 |---|---|---|
-| R0 | aucun (dépôt tel quel) | point de départ |
-| R1 | SEED = 0 et SEED = 69 | bruit dû à la graine (seuil de significativité) |
-| R2 | RHO_SCALE_BY_EPS = False | effet de la paramétrisation de rho |
-| R3 | LAMBDA = 1e-3 | effet de lambda (échelle de longueur) |
+| R0 | SEED = 1234 | point de départ |
+| R1 | SEED = 0, puis SEED = 69 | bruit dû à la graine |
+| R2 | SEED = 1234, RHO_SCALE_BY_EPS = False | effet de la paramétrisation de rho |
+| R3 | SEED = 1234, LAMBDA = 1e-3 | effet de lambda |
+
+À relever (dernier cycle, `5_shape_s<SEED>.npz` et figure) : paroi isolante présente ou non,
+J_DF/J_ref et J_DF seuillé/J_ref (comparer à la référence SIMP r = 0.05 : 0.207 / 0.194).
 
 Référence SIMP (`reference_simp_df.py`, évaluateur DF du PINN) :
 
