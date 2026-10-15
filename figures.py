@@ -1,4 +1,5 @@
 # Post-traitement : figures de résultats et comparaison PINN / différences finies.
+import os
 import numpy as np
 import torch
 import matplotlib
@@ -9,18 +10,9 @@ from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
 
 # ----------------------------------------------------------------------------
 # Aperçu en cours d'entraînement : rho seul, fichier OUT_LIVE écrasé à chaque appel.
-# Sous Jupyter / IPython, l'image est aussi affichée et mise à jour sur place.
+# À suivre depuis un autre terminal : display -update 5 live_rho_s<SEED>.png
 # ----------------------------------------------------------------------------
-try:
-    from IPython import get_ipython
-    from IPython.display import Image, display
-    _IPYTHON = get_ipython() is not None
-except ImportError:
-    _IPYTHON = False
-_live_handle = None
-
 def live_snapshot(rho_model, title):
-    global _live_handle
     g = np.linspace(0.0, 1.0, N_PLOT)
     gx, gy = np.meshgrid(g, g, indexing="ij")
     pts = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1), device=DEVICE)
@@ -33,14 +25,10 @@ def live_snapshot(rho_model, title):
         ax.axvline(xb, color="tab:orange", ls="--", lw=1.2)
     ax.set_title(title, fontsize=9)
     fig.tight_layout()
-    fig.savefig(OUT_LIVE, dpi=80)
+    tmp = "tmp_" + OUT_LIVE                 # écriture puis renommage : jamais de fichier à moitié écrit
+    fig.savefig(tmp, dpi=80)
     plt.close(fig)
-    if _IPYTHON:
-        img = Image(filename=OUT_LIVE)
-        if _live_handle is None:
-            _live_handle = display(img, display_id=True)
-        else:
-            _live_handle.update(img)
+    os.replace(tmp, OUT_LIVE)
 
 def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     fig, axd = plt.subplot_mosaic([["rho", "u", "res"], ["loss", "loss", "vol"]], figsize=(18, 10))
