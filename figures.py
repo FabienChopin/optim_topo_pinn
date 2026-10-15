@@ -4,9 +4,8 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from scipy.interpolate import RegularGridInterpolator
-from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, N_FD, OUT_FIG, OUT_FIG_FD
-from pinn import XJ, WJ, XJ_np, WJ_np, J_REF, grad, divergence, conductivity, solve_fd
+from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD
+from pinn import XJ, WJ, G_FD, J_REF, grad, divergence, conductivity, solve_fd, j_fd
 
 def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     fig, axd = plt.subplot_mosaic([["rho", "u", "res"], ["loss", "loss", "vol"]], figsize=(18, 10))
@@ -53,11 +52,16 @@ def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     ax_l.set_title("Losses")
     ax_l.grid(alpha=0.3)
     axv = axd["vol"]
-    axv.plot(it_axis, history["volume"])
+    axv.plot(it_axis, history["volume"], color="tab:blue")
     axv.axhline(V0, color="k", ls="--", lw=1)
     for n in adam_ends:
         axv.axvline(n, color="gray", ls="--", lw=1)
-    axv.set_title(r"$\int \rho\,dx$")
+    axv.set_ylabel(r"$\int \rho\,dx$", color="tab:blue")
+    axg = axv.twinx()
+    axg.plot(it_axis, history["gris"], color="tab:gray")
+    axg.set_ylim(0.0, 1.0)
+    axg.set_ylabel(r"gris $4\int \rho(1-\rho)\,dx$", color="tab:gray")
+    axv.set_title(r"volume et gris")
     axv.grid(alpha=0.3)
     fig.tight_layout()
     fname = f"{i}_{OUT_FIG}"
@@ -65,14 +69,14 @@ def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     plt.close(fig)
     return fname
 
-def plot_results(i, u_model, rho_model, history, adam_ends):
+def plot_results(i, p, u_model, rho_model, history, adam_ends):
     g = np.linspace(0.0, 1.0, N_PLOT)
     gx, gy = np.meshgrid(g, g, indexing="ij")
     xp = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1),
                       device=DEVICE).requires_grad_(True)
     up = u_model(xp)
     rhop = rho_model(xp)
-    rp = -divergence(conductivity(rhop) * grad(up, xp), xp) - 1.0
+    rp = -divergence(conductivity(rhop, p) * grad(up, xp), xp) - 1.0
     def to_img(t):  # (N, 1) -> image (y, x) pour imshow(origin="lower")
         return t.detach().cpu().numpy().reshape(N_PLOT, N_PLOT).T
     return draw_figure(i, to_img(rhop), to_img(up), to_img(rp), history, adam_ends)
@@ -80,7 +84,7 @@ def plot_results(i, u_model, rho_model, history, adam_ends):
 # ----------------------------------------------------------------------------
 # Vérification : u par différences finies (rho du réseau figé) vs u du réseau
 # ----------------------------------------------------------------------------
-def draw_fd_figure(i, eps, g, u_nn, u_fd, J_nn, J_fd, rel_l2):
+def draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
     fig, ax = plt.subplots(1, 4, figsize=(22, 5.2))
     u_min, u_max = min(u_nn.min(), u_fd.min()), max(u_nn.max(), u_fd.max())
     def show(a, img, title, extend="neither", **kw):
@@ -105,8 +109,9 @@ def draw_fd_figure(i, eps, g, u_nn, u_fd, J_nn, J_fd, rel_l2):
     ax[3].set_xlabel("x")
     ax[3].legend(loc="best")
     ax[3].grid(alpha=0.3)
-    fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   |   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-                 f"J_DF/J_ref = {J_fd / J_REF:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   |   "
+    fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   P = {p:g}   |   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
+                 f"J_DF/J_ref = {J_fd / J_REF:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   "
+                 f"J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   |   "
                  f"erreur L2 relative sur u = {rel_l2:.3e}")
     fig.tight_layout()
     fname = f"{i}_{OUT_FIG_FD}"
@@ -114,16 +119,18 @@ def draw_fd_figure(i, eps, g, u_nn, u_fd, J_nn, J_fd, rel_l2):
     plt.close(fig)
     return fname
 
-def compare_fd(i, eps, u_model, rho_model):
-    g = np.linspace(0.0, 1.0, N_FD + 2)
+def compare_fd(i, eps, p, u_model, rho_model):
+    g = G_FD
     gx, gy = np.meshgrid(g, g, indexing="ij")
     pts = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1), device=DEVICE)
     with torch.no_grad():
         rho_grid = rho_model(pts).cpu().numpy().reshape(len(g), len(g))
         u_nn = u_model(pts).cpu().numpy().reshape(len(g), len(g))
         J_nn = float((WJ * u_model(XJ) ** 2).sum())
-    u_fd = solve_fd(rho_grid, g)
-    J_fd = float((WJ_np.ravel() * RegularGridInterpolator((g, g), u_fd)(XJ_np) ** 2).sum())
+    u_fd = solve_fd(rho_grid, g, p)
+    J_fd = j_fd(u_fd, g)
+    # Design seuillé à 0.5 (rho dans {0, 1}) : prix de l'interface diffuse à l'EPS courant
+    J_seuil = j_fd(solve_fd((rho_grid > 0.5).astype(float), g, p), g)
     rel_l2 = float(np.sqrt(((u_nn - u_fd) ** 2).mean() / (u_fd ** 2).mean()))
-    fname = draw_fd_figure(i, eps, g, u_nn, u_fd, J_nn, J_fd, rel_l2)
-    return fname, J_nn, J_fd, rel_l2
+    fname = draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2)
+    return fname, J_nn, J_fd, J_seuil, rel_l2

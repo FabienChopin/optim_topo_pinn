@@ -32,7 +32,7 @@ import sys
 import time
 import numpy as np
 import torch
-from parametres import (SEED, DEVICE, P, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
+from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
                         MAX_CHUNKS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
@@ -40,7 +40,6 @@ from pinn import X, W, XJ, J_REF, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd
 
 _ = torch.manual_seed(SEED)
-np.random.seed(SEED)
 # ----------------------------------------------------------------------------
 # Journal : tout ce qui s'affiche (print, erreurs) est aussi écrit dans LOG_FILE
 # ----------------------------------------------------------------------------
@@ -67,7 +66,7 @@ _log_handle = open(LOG_FILE, "a", encoding="utf-8")
 sys.stdout = Tee(sys.stdout, _log_handle)
 sys.stderr = Tee(sys.stderr, _log_handle)
 print(f"\n########## Lancement {time.strftime('%Y-%m-%d %H:%M:%S')}   SEED = {SEED} ##########")
-print(f"P = {P}  V0 = {V0}  EPS0 = {EPS0}  LAMBDA = {LAMBDA}  MU = {MU}  BETA = {BETA}  "
+print(f"P = 1 -> {P_MAX} (pas {P_STEP})  V0 = {V0}  EPS0 = {EPS0}  LAMBDA = {LAMBDA}  MU = {MU}  BETA = {BETA}  "
       f"N_GAUSS = {N_GAUSS}  WIDTH x DEPTH = {WIDTH} x {DEPTH}  N_CYCLES = {N_CYCLES}")
 # ----------------------------------------------------------------------------
 # Réseaux et historique
@@ -76,7 +75,7 @@ u_model = UNet().to(DEVICE)
 rho_model = RhoNet().to(DEVICE)
 params = list(u_model.parameters()) + list(rho_model.parameters())
 
-history = {k: [] for k in ["total", "J/J_ref", "residu", "vdw", "vol_pen", "volume"]}
+history = {k: [] for k in ["total", "J/J_ref", "residu", "vdw", "vol_pen", "volume", "gris"]}
 adam_ends = []   # indices de fin d'Adam (un par cycle), pour les figures
 def record(parts):
     for k in history:
@@ -85,7 +84,7 @@ def record(parts):
 def log(tag, it, parts):
     print(f"[{tag} {it:6d}] total={parts['total']:.4e}  J/Jref={parts['J/J_ref']:.4e}  "
           f"res={parts['residu']:.3e}  vdw={parts['vdw']:.3e}  "
-          f"vol={parts['volume']:.4f}")
+          f"vol={parts['volume']:.4f}  gris={parts['gris']:.3f}")
 
 # ----------------------------------------------------------------------------
 # Entraînement : continuation sur EPS, chaque palier arrêté sur stabilité
@@ -97,13 +96,14 @@ for i in range(N_CYCLES):
     last_cycle = (i == N_CYCLES - 1)
     tol_rho = TOL_RHO_FINAL if last_cycle else TOL_RHO
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
-    print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
+    P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
+    print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
     t0 = time.time()
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
     opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
     for it in range(1, n_adam + 1):
         opt_adam.zero_grad()
-        total, parts = compute_losses(u_model, rho_model, EPS)
+        total, parts = compute_losses(u_model, rho_model, EPS, P)
         total.backward()
         opt_adam.step()
         record(parts)
@@ -119,7 +119,7 @@ for i in range(N_CYCLES):
     n_eval = [0]
     def closure():
         opt_lbfgs.zero_grad()
-        total, parts = compute_losses(u_model, rho_model, EPS)
+        total, parts = compute_losses(u_model, rho_model, EPS, P)
         total.backward()
         record(parts)
         n_eval[0] += 1
@@ -128,7 +128,7 @@ for i in range(N_CYCLES):
         return total
     with torch.no_grad():
         rho_old = rho_model(X)
-    loss_old = compute_losses(u_model, rho_model, EPS)[1]["total"]
+    loss_old = compute_losses(u_model, rho_model, EPS, P)[1]["total"]
     status = f"plafond de {MAX_CHUNKS} tronçons atteint"
     for k in range(1, MAX_CHUNKS + 1):
         _ = opt_lbfgs.step(closure)
@@ -136,7 +136,7 @@ for i in range(N_CYCLES):
             rho_new = rho_model(X)
         d_rho = (W * (rho_new - rho_old).abs()).sum().item()   # aire du design qui a changé
         rho_old = rho_new
-        _, cur = compute_losses(u_model, rho_model, EPS)
+        _, cur = compute_losses(u_model, rho_model, EPS, P)
         res_l2 = np.sqrt(cur["residu"])
         d_loss = abs(cur["total"] - loss_old) / abs(loss_old)
         loss_old = cur["total"]
@@ -152,17 +152,17 @@ for i in range(N_CYCLES):
             break
     print(f"Arrêt du palier : {status}")
     print(f"Temps du cycle : {time.time() - t0:.1f} s")
-    _, final = compute_losses(u_model, rho_model, EPS)
+    _, final = compute_losses(u_model, rho_model, EPS, P)
     log("Final", 0, final)
     print(f"J physique = {final['J/J_ref'] * J_REF:.6e}   "
           f"||r||_L2 = {np.sqrt(final['residu']):.3e}   "
           f"volume = {final['volume']:.5f} (cible {V0})")
     out_models = f"{i}_{OUT_MODELS}"
-    torch.save({"u": u_model.state_dict(), "rho": rho_model.state_dict(), "eps": EPS},
+    torch.save({"u": u_model.state_dict(), "rho": rho_model.state_dict(), "eps": EPS, "p": P},
                out_models)
-    fig_name = plot_results(i, u_model, rho_model, history, adam_ends)
+    fig_name = plot_results(i, P, u_model, rho_model, history, adam_ends)
     print(f"Figures : {fig_name}   Modèles : {out_models}")
-    fig_fd, J_nn, J_fd, err_u = compare_fd(i, EPS, u_model, rho_model)
+    fig_fd, J_nn, J_fd, J_seuil, err_u = compare_fd(i, EPS, P, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-          f"J_DF/J_ref = {J_fd / J_REF:.4e}   erreur L2 relative sur u = {err_u:.3e}")
+          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   erreur L2 relative sur u = {err_u:.3e}")
     EPS *= EPS_FACTOR

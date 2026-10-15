@@ -6,7 +6,10 @@ SEED = 3                  # graine : lancer plusieurs graines et garder le meill
 torch.set_default_dtype(torch.float64)
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 A1, A2 = 1.0, 0.01        # conductivités des deux phases
-P = 1.0                   # A(rho) = A2 + (A1 - A2) * rho**P   (P = 1 : interpolation linéaire)
+# A(rho) = A2 + (A1 - A2) * rho**P (SIMP). Continuation P = min(P_MAX, 1 + P_STEP * cycle) :
+# P = 1 au départ (gradients sains, la topologie se forme), puis P_MAX pour chasser le gris.
+P_MAX = 3.0
+P_STEP = 0.5
 V0 = 0.5                  # fraction volumique cible
 EPS0 = 0.1                # épaisseur d'interface initiale
 LAMBDA = 1e-3             # poids Van der Waals
@@ -20,8 +23,10 @@ WIDTH, DEPTH = 32, 3      # MLP : DEPTH couches cachées de WIDTH neurones
 ADAM_ITERS = 2000         # Adam au premier palier seulement
 ADAM_LR = 1e-3
 LOG_EVERY = 500
-N_CYCLES = 21             # paliers de continuation sur EPS
-EPS_FACTOR = 10 ** (-0.1) # EPS <- EPS * EPS_FACTOR après chaque palier (0.1 -> 0.001)
+N_CYCLES = 11             # paliers de continuation sur EPS
+EPS_FACTOR = 10 ** (-0.1) # EPS <- EPS * EPS_FACTOR après chaque palier (0.1 -> 0.01)
+# EPS final >= 2-3 x l'espacement des points de Gauss au centre (~ pi / (2 N_GAUSS)) :
+# l'interface (largeur ~ 4.4 EPS) doit contenir quelques points. Plus fin -> augmenter N_GAUSS.
 # Arrêt de chaque palier sur stabilité : L-BFGS par tronçons, contrôle entre tronçons
 LBFGS_CHUNK = 1500        # itérations L-BFGS par tronçon
 MAX_CHUNKS = 20           # plafond par palier (-> 30 000 itérations au plus)

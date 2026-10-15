@@ -4,8 +4,9 @@ import torch
 import torch.nn as nn
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
-from parametres import (DEVICE, A1, A2, P, V0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
-                        N_GAUSS_JY, J_A, J_B, WIDTH, DEPTH)
+from scipy.interpolate import RegularGridInterpolator
+from parametres import (DEVICE, A1, A2, P_MAX, V0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
+                        N_GAUSS_JY, J_A, J_B, WIDTH, DEPTH, N_FD)
 # ----------------------------------------------------------------------------
 # Quadrature de Gauss-Legendre (tensorielle)
 # ----------------------------------------------------------------------------
@@ -26,21 +27,6 @@ _X_np, _W_np = gauss_legendre_2d(N_GAUSS, N_GAUSS, 0.0, 1.0, 0.0, 1.0)
 XJ_np, WJ_np = gauss_legendre_2d(N_GAUSS_JX, N_GAUSS_JY, J_A, J_B, 0.0, 1.0)
 X, W = torch.tensor(_X_np, device=DEVICE), torch.tensor(_W_np, device=DEVICE)
 XJ, WJ = torch.tensor(XJ_np, device=DEVICE), torch.tensor(WJ_np, device=DEVICE)
-# ----------------------------------------------------------------------------
-# Normalisation de J : solution homogène rho = V0 (série de Fourier)
-# ----------------------------------------------------------------------------
-def u_homogeneous(pts, a, n_terms=200):
-    """-a Lap u = 1 sur [0,1]^2, u = 0 au bord :
-    u = (1/a) sum_{m,n impairs} 16 / (pi^4 m n (m^2 + n^2)) sin(m pi x) sin(n pi y)."""
-    k = np.arange(1, 2 * n_terms, 2)
-    sx = np.sin(np.pi * np.outer(pts[:, 0], k))
-    sy = np.sin(np.pi * np.outer(pts[:, 1], k))
-    m, n = np.meshgrid(k, k, indexing="ij")
-    c = 16.0 / (np.pi ** 4 * m * n * (m ** 2 + n ** 2))
-    return ((sx @ c) * sy).sum(axis=1) / a
-
-_a_hom = A2 + (A1 - A2) * V0 ** P
-J_REF = float((WJ_np.ravel() * u_homogeneous(XJ_np, _a_hom) ** 2).sum())
 # ----------------------------------------------------------------------------
 # Réseaux
 # ----------------------------------------------------------------------------
@@ -91,17 +77,17 @@ def divergence(q, x):
     """Divergence d'un champ q (N, d) -> (N, 1)."""
     return sum(grad(q[:, k:k + 1], x)[:, k:k + 1] for k in range(x.shape[1]))
 
-def conductivity(rho):
-    return A2 + (A1 - A2) * rho ** P
+def conductivity(rho, p):
+    return A2 + (A1 - A2) * rho ** p
 
-def compute_losses(u_model, rho_model, eps):
+def compute_losses(u_model, rho_model, eps, p):
     x = X.clone().requires_grad_(True)
     u = u_model(x)
     gu = grad(u, x)                                   # (N, 2)
     rho = rho_model(x)
     grho = grad(rho, x)                               # (N, 2)
     # Résidu fort : autograd sur le flux q = A(rho) grad u
-    q = conductivity(rho) * gu
+    q = conductivity(rho, p) * gu
     r = -divergence(q, x) - 1.0
     L_res = (W * r ** 2).sum()                        # ||r||_{L2}^2
     # Van der Waals
@@ -120,18 +106,19 @@ def compute_losses(u_model, rho_model, eps):
         "vdw": L_vdw.item(),
         "vol_pen": L_vol.item(),
         "volume": vol.item(),
+        "gris": (W * 4.0 * rho * (1.0 - rho)).sum().item(),   # 0 : noir et blanc, 1 : tout à 0.5
     }
     return total, parts
 
 # ----------------------------------------------------------------------------
 # Solveur DF de référence (rho figé)
 # ----------------------------------------------------------------------------
-def solve_fd(rho_grid, g):
+def solve_fd(rho_grid, g, p):
     """-div(A(rho) grad u) = 1 sur [0,1]^2, u = 0 au bord. Volumes finis 5 points,
     moyenne harmonique de A aux faces. rho_grid : (n+2, n+2) sur la grille g, bords compris."""
     n = len(g) - 2
     h = g[1] - g[0]
-    A = conductivity(rho_grid)
+    A = conductivity(rho_grid, p)
     ax = 2.0 * A[:-1, :] * A[1:, :] / (A[:-1, :] + A[1:, :])   # faces entre i et i+1
     ay = 2.0 * A[:, :-1] * A[:, 1:] / (A[:, :-1] + A[:, 1:])   # faces entre j et j+1
     I, Jj = np.meshgrid(np.arange(1, n + 1), np.arange(1, n + 1), indexing="ij")
@@ -149,3 +136,12 @@ def solve_fd(rho_grid, g):
     u = np.zeros((n + 2, n + 2))
     u[1:-1, 1:-1] = spla.spsolve(M, np.ones(n * n)).reshape(n, n)
     return u
+
+def j_fd(u_grid, g):
+    """J d'un champ u donné sur la grille g (interpolé aux points de Gauss de la bande)."""
+    return float((WJ_np.ravel() * RegularGridInterpolator((g, g), u_grid)(XJ_np) ** 2).sum())
+
+# Normalisation de J : solution DF du design homogène rho = V0, avec P = P_MAX
+# (fixe pendant tout le run pour que les J restent comparables d'un cycle à l'autre)
+G_FD = np.linspace(0.0, 1.0, N_FD + 2)
+J_REF = j_fd(solve_fd(np.full((len(G_FD), len(G_FD)), V0), G_FD, P_MAX), G_FD)
