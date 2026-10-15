@@ -5,7 +5,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from parametres import DEVICE, A1, A2, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE
+from parametres import DEVICE, A1, A2, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE, OUT_FORME
 from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
 
 def show_log_a(fig, a, rho_img, p):
@@ -171,6 +171,10 @@ def compare_fd(i, eps, p, j_ref, u_model, rho_model):
     wg = np.full(len(g), g[1] - g[0])               # poids des trapèzes
     wg[[0, -1]] *= 0.5
     vol_seuil = float((np.outer(wg, wg) * seuil).sum())
+    # La forme elle-même (le livrable), relisible sans torch ni réseau : np.load(...)
+    np.savez(f"{i}_{OUT_FORME}", x=g, y=g, rho=rho_grid, seuil=seuil.astype(np.uint8),
+             volume=float((np.outer(wg, wg) * rho_grid).sum()), volume_seuil=vol_seuil,
+             J_DF=J_fd, J_DF_seuil=J_seuil, J_ref=j_ref, eps=eps, p=p)
     rel_l2 = float(np.sqrt(((u_nn - u_fd) ** 2).mean() / (u_fd ** 2).mean()))
     fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seuil, rel_l2)
     return fname, J_nn, J_fd, J_seuil, vol_seuil, rel_l2

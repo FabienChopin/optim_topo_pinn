@@ -41,4 +41,5 @@ OUT_LIVE = f"live_rho_s{SEED}.png"   # aperçu écrasé à chaque mise à jour
 OUT_MODELS = f"modeles_phase_field_pinn_2d_s{SEED}.pt"
 N_FD = 499                # noeuds intérieurs par direction pour la vérification DF
 OUT_FIG_FD = f"comparaison_u_DF_s{SEED}.png"
+OUT_FORME = f"forme_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sans réseau)
 LOG_FILE = f"log_phase_field_pinn_2d_s{SEED}.txt"   # copie de toute la sortie console

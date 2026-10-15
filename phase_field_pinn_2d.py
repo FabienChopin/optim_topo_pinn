@@ -98,6 +98,7 @@ for i in range(N_CYCLES):
     tol_rho = TOL_RHO_FINAL if last_cycle else TOL_RHO
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
     P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
+    rho_model.eps = EPS                             # rho = sigmoid(N / EPS) : l'interface s'affine
     print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
     t0 = time.time()
     def live(tag, parts):   # aperçu du design en cours de palier

@@ -5,7 +5,7 @@ import torch.nn as nn
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.interpolate import RegularGridInterpolator
-from parametres import (DEVICE, A1, A2, V0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
+from parametres import (DEVICE, A1, A2, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
                         N_GAUSS_JY, J_A, J_B, WIDTH, DEPTH, N_FD)
 # ----------------------------------------------------------------------------
 # Quadrature de Gauss-Legendre (tensorielle)
@@ -55,16 +55,20 @@ class UNet(nn.Module):
         return bx * (1.0 - bx) * by * (1.0 - by) * self.mlp(x)
 
 class RhoNet(nn.Module):
-    """rho = sigmoid(N(x, y)) in (0, 1), initialisé proche de V0."""
+    """rho = sigmoid(N(x, y) / eps) in (0, 1), initialisé proche de V0.
+    Profil d'interface optimal : rho = sigmoid(d / eps), d distance signée. N n'a donc qu'à
+    approcher d (pente ~1, indépendante de eps) : l'interface s'affine d'elle-même quand eps
+    diminue. self.eps est mis à jour à chaque palier (et relu depuis la sauvegarde en reprise)."""
     def __init__(self):
         super().__init__()
         self.mlp = MLP()
+        self.eps = EPS0
         last = self.mlp.net[-1]
         with torch.no_grad():
-            last.weight.mul_(0.1)
-            last.bias.fill_(float(np.log(V0 / (1.0 - V0))))  # logit(V0)
+            last.weight.mul_(0.1 * EPS0)                                 # N / EPS0 ~ 0.1 * xavier
+            last.bias.fill_(float(EPS0 * np.log(V0 / (1.0 - V0))))      # EPS0 * logit(V0)
     def forward(self, x):
-        return torch.sigmoid(self.mlp(x))
+        return torch.sigmoid(self.mlp(x) / self.eps)
 
 # ----------------------------------------------------------------------------
 # Opérateurs différentiels et losses
