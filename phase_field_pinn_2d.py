@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, LIVE_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
-                        MAX_CHUNKS, MAX_CHUNKS_RAMP, P_AFTER_EPS, N_EPS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
+                        MAX_CHUNKS, MAX_CHUNKS_RAMP, P_AFTER_EPS, N_EPS, INIT_SHAPE, INIT_FIT_ITERS, EPS_FINAL, RHO_SCALE_BY_EPS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
 from pinn import X, W, XJ, j_homogeneous, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd, live_snapshot
@@ -92,11 +92,44 @@ def log(tag, it, parts):
 print(f"Device : {DEVICE}   points de quadrature : {X.shape[0]} (+ {XJ.shape[0]} pour J)")
 J_REF = j_homogeneous(1.0)                               # mélange homogène rho = V0, P = 1
 print(f"J_ref (rho homogène = V0, P = 1) = {J_REF:.6e}")
+if INIT_SHAPE is not None:
+    # Ajustement de rho sur la forme donnée, à EPS final, avant toute optimisation
+    from scipy.interpolate import RegularGridInterpolator
+    shape = np.load(INIT_SHAPE)
+    g = np.linspace(0.0, 1.0, 101)
+    gx, gy = np.meshgrid(g, g, indexing="ij")
+    pts_np = np.stack([gx.ravel(), gy.ravel()], axis=1)
+    rho_target = np.clip(RegularGridInterpolator((shape["x"], shape["y"]), shape["rho"])(pts_np), 0.01, 0.99)
+    pts = torch.tensor(pts_np, device=DEVICE)
+    rho_target = torch.tensor(rho_target, device=DEVICE).reshape(-1, 1)
+    # Régression de N sur EPS * logit(rho) : pas de saturation de la sigmoïde, contrairement
+    # à un écart quadratique sur rho quand l'interface est fine
+    rho_model.eps = EPS_FINAL
+    n_scale = EPS_FINAL if RHO_SCALE_BY_EPS else 1.0     # rho = sigmoid(N / n_scale)
+    n_target = n_scale * torch.log(rho_target / (1.0 - rho_target))
+    opt_fit = torch.optim.LBFGS(rho_model.parameters(), lr=1.0, max_iter=INIT_FIT_ITERS,
+                                tolerance_grad=1e-12, tolerance_change=1e-15,
+                                line_search_fn="strong_wolfe")
+    def fit_closure():
+        opt_fit.zero_grad()
+        loss = ((rho_model.mlp(pts) - n_target) ** 2).mean() / n_scale ** 2
+        loss.backward()
+        return loss
+    opt_fit.step(fit_closure)
+    with torch.no_grad():
+        fit = ((rho_model(pts) - rho_target) ** 2).mean()
+    print(f"Forme initiale {INIT_SHAPE} : écart quadratique moyen sur rho = {fit.item() ** 0.5:.3e}")
+    fig_fd, J_nn, J_fd, J_binary, vol_binary, err_u = compare_fd("init", EPS_FINAL, P_MAX, J_REF,
+                                                                 u_model, rho_model)
+    print(f"Forme initiale (avant optimisation) : J_DF/J_ref = {J_fd / J_REF:.4e}   "
+          f"J_DF seuillé/J_ref = {J_binary / J_REF:.4e} (volume {vol_binary:.4f})   -> {fig_fd}")
 for i in range(N_CYCLES):
     last_cycle = (i == N_CYCLES - 1)
     tol_rho = TOL_RHO_FINAL if last_cycle else TOL_RHO
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
-    if P_AFTER_EPS:                                 # EPS d'abord (P = 1), puis P à EPS final
+    if INIT_SHAPE is not None:                      # forme donnée : P et EPS finaux d'emblée
+        EPS, P = EPS_FINAL, P_MAX
+    elif P_AFTER_EPS:                               # EPS d'abord (P = 1), puis P à EPS final
         EPS = EPS0 * EPS_FACTOR ** min(i, N_EPS - 1)
         P = 1.0 if i < N_EPS else min(P_MAX, 1.0 + P_STEP * (i - N_EPS + 1))
     else:                                           # EPS et P ensemble
@@ -110,7 +143,9 @@ for i in range(N_CYCLES):
                                  f"J/J_ref = {parts['J/J_ref']:.4f}   gris = {parts['grey']:.3f}   "
                                  f"vol = {parts['volume']:.4f}")
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
-    opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
+    # Forme donnée : Adam n'entraîne que u (rho figé), pour que u s'adapte avant le couplage
+    adam_params = list(u_model.parameters()) if INIT_SHAPE is not None else params
+    opt_adam = torch.optim.Adam(adam_params, lr=ADAM_LR)
     for it in range(1, n_adam + 1):
         opt_adam.zero_grad()
         total, parts = compute_losses(u_model, rho_model, EPS, P, J_REF)

@@ -72,3 +72,12 @@ if P_AFTER_EPS:
         EPS_FACTOR = 10 ** (-0.2)             # 0.1 -> 0.016 en 5 paliers
         N_EPS = 5
     N_CYCLES = N_EPS + N_P_RAMP               # se termine à l'arrivée à P = P_MAX
+EPS_FINAL = EPS0 * EPS_FACTOR ** ((N_EPS if P_AFTER_EPS else N_CYCLES) - 1)   # EPS du dernier palier
+
+# Démarrage depuis une forme donnée (.npz avec x, y, rho, par ex. shape_reference_simp.npz) :
+# rho est d'abord ajusté sur la forme, puis 3 paliers à P = P_MAX et EPS final.
+# Sert à savoir si une forme est stable pour le PINN (elle tient) ou défavorisée (elle se défait).
+INIT_SHAPE = None
+INIT_FIT_ITERS = 2000      # L-BFGS ; 1500 itérations donnent un écart ~0.07 sur rho (MLP 32x3, EPS 0.01)
+if INIT_SHAPE is not None:
+    N_CYCLES = 3
