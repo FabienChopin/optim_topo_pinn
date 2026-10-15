@@ -36,7 +36,7 @@ from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
                         MAX_CHUNKS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
-from pinn import X, W, XJ, J_REF, UNet, RhoNet, compute_losses
+from pinn import X, W, XJ, J_REF, j_homogene, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd
 
 _ = torch.manual_seed(SEED)
@@ -98,6 +98,8 @@ for i in range(N_CYCLES):
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
     P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
     print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
+    J_hom = j_homogene(P)                             # design homogène rho = V0 au P courant
+    print(f"J_hom(P)/J_ref = {J_hom / J_REF:.4e}   (à battre : J/J_ref doit passer dessous)")
     t0 = time.time()
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
     opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
@@ -164,5 +166,5 @@ for i in range(N_CYCLES):
     print(f"Figures : {fig_name}   Modèles : {out_models}")
     fig_fd, J_nn, J_fd, J_seuil, err_u = compare_fd(i, EPS, P, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   erreur L2 relative sur u = {err_u:.3e}")
+          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   gain J_DF/J_hom(P) = {J_fd / J_hom:.4f}   erreur L2 relative sur u = {err_u:.3e}")
     EPS *= EPS_FACTOR

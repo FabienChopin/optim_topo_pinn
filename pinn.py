@@ -144,4 +144,9 @@ def j_fd(u_grid, g):
 # Normalisation de J : solution DF du design homogène rho = V0, avec P = P_MAX
 # (fixe pendant tout le run pour que les J restent comparables d'un cycle à l'autre)
 G_FD = np.linspace(0.0, 1.0, N_FD + 2)
-J_REF = j_fd(solve_fd(np.full((len(G_FD), len(G_FD)), V0), G_FD, P_MAX), G_FD)
+
+def j_homogene(p):
+    """J du design homogène rho = V0 à l'exposant p (référence au P courant)."""
+    return j_fd(solve_fd(np.full((len(G_FD), len(G_FD)), V0), G_FD, p), G_FD)
+
+J_REF = j_homogene(P_MAX)
