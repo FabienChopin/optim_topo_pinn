@@ -144,6 +144,5 @@ def j_fd(u_grid, g):
 G_FD = np.linspace(0.0, 1.0, N_FD + 2)
 
 def j_homogene(p):
-    """Normalisation de J : J du design homogène rho = V0 à l'exposant p, par DF.
-    Recalculée à chaque cycle : J/J_ref < 1 <=> le design bat le matériau homogène."""
+    """J du design homogène rho = V0 à l'exposant p, par DF (J_ref = j_homogene(1.0))."""
     return j_fd(solve_fd(np.full((len(G_FD), len(G_FD)), V0), G_FD, p), G_FD)

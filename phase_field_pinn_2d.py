@@ -14,8 +14,8 @@
 #       + lambda * int (eps |grad rho|^2 + rho^2 (1-rho)^2 / eps) dx  (Van der Waals)
 #       + mu     * (int rho dx - V0)^2                                (volume)
 #
-# J_ref = J du design homogène rho = V0 au P du cycle courant (résolution DF), recalculé
-# à chaque cycle : J/J_ref < 1 <=> le design bat le matériau homogène.
+# J_ref = J du mélange homogène rho = V0 avec interpolation linéaire (P = 1), par DF,
+# fixe pendant tout le run : J/J_ref < 1 <=> le design bat le mélange homogène.
 #
 # Discrétisation
 #     - Gauss-Legendre tensoriel N_GAUSS x N_GAUSS sur [0, 1]^2 (résidu, VdW, volume)
@@ -90,6 +90,8 @@ def log(tag, it, parts):
 # Entraînement : continuation sur EPS, chaque palier arrêté sur stabilité
 # ----------------------------------------------------------------------------
 print(f"Device : {DEVICE}   points de quadrature : {X.shape[0]} (+ {XJ.shape[0]} pour J)")
+J_REF = j_homogene(1.0)                               # mélange homogène rho = V0, P = 1
+print(f"J_ref (rho homogène = V0, P = 1) = {J_REF:.6e}")
 EPS = EPS0
 for i in range(N_CYCLES):
     last_cycle = (i == N_CYCLES - 1)
@@ -97,8 +99,6 @@ for i in range(N_CYCLES):
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
     P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
     print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
-    J_REF = j_homogene(P)                             # design homogène rho = V0 au P courant
-    print(f"J_ref (rho homogène = V0, P = {P:g}) = {J_REF:.6e}")
     t0 = time.time()
     def live(tag, parts):   # aperçu du design en cours de palier
         live_snapshot(rho_model, P, f"Cycle {i}   P = {P:g}   ε = {EPS:.2e}   {tag}\n"
