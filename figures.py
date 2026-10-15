@@ -5,33 +5,45 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE
+from parametres import DEVICE, A1, A2, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE
 from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
 
+def show_log_a(fig, a, rho_img, p):
+    """log10 A(rho) : ce que voit l'EDP. Échelle [log10 A2, log10 A1]."""
+    im = a.imshow(np.log10(conductivity(rho_img, p)), origin="lower", extent=(0, 1, 0, 1),
+                  cmap="magma", vmin=np.log10(A2), vmax=np.log10(A1))
+    fig.colorbar(im, ax=a, fraction=0.046, pad=0.04)
+    for xb in (J_A, J_B):
+        a.axvline(xb, color="tab:cyan", ls="--", lw=1.2)
+    a.set_title(rf"$\log_{{10}} A(\rho)$   (P = {p:g})")
+
 # ----------------------------------------------------------------------------
-# Aperçu en cours d'entraînement : rho seul, fichier OUT_LIVE écrasé à chaque appel.
+# Aperçu en cours d'entraînement : rho et log10 A, fichier OUT_LIVE écrasé à chaque appel.
 # À suivre depuis un autre terminal : display -update 5 live_rho_s<SEED>.png
 # ----------------------------------------------------------------------------
-def live_snapshot(rho_model, title):
+def live_snapshot(rho_model, p, title):
     g = np.linspace(0.0, 1.0, N_PLOT)
     gx, gy = np.meshgrid(g, g, indexing="ij")
     pts = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1), device=DEVICE)
     with torch.no_grad():
         rho_img = rho_model(pts).cpu().numpy().reshape(N_PLOT, N_PLOT).T
-    fig, ax = plt.subplots(figsize=(6, 5.5))
+    fig, (ax, ax_a) = plt.subplots(1, 2, figsize=(11, 5.5))
     im = ax.imshow(rho_img, origin="lower", extent=(0, 1, 0, 1), cmap="gray_r", vmin=0.0, vmax=1.0)
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     for xb in (J_A, J_B):
         ax.axvline(xb, color="tab:orange", ls="--", lw=1.2)
-    ax.set_title(title, fontsize=9)
+    ax.set_title(r"$\rho$")
+    show_log_a(fig, ax_a, rho_img, p)
+    fig.suptitle(title, fontsize=9)
     fig.tight_layout()
     tmp = "tmp_" + OUT_LIVE                 # écriture puis renommage : jamais de fichier à moitié écrit
     fig.savefig(tmp, dpi=80)
     plt.close(fig)
     os.replace(tmp, OUT_LIVE)
 
-def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
-    fig, axd = plt.subplot_mosaic([["rho", "u", "res"], ["loss", "loss", "vol"]], figsize=(18, 10))
+def draw_figure(i, p, rho_img, u_img, r_img, history, adam_ends):
+    fig, axd = plt.subplot_mosaic([["rho", "A", "u", "res"], ["loss", "loss", "loss", "vol"]],
+                                  figsize=(24, 10))
     def show(a, img, title, extend="neither", **kw):
         im = a.imshow(img, origin="lower", extent=(0, 1, 0, 1), **kw)
         fig.colorbar(im, ax=a, fraction=0.046, pad=0.04, extend=extend)
@@ -42,6 +54,7 @@ def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
         a.set_ylabel("y")
     show(axd["rho"], rho_img, r"$\rho(x, y)$ (bande de J en pointillés)",
          cmap="gray_r", vmin=0.0, vmax=1.0)
+    show_log_a(fig, axd["A"], rho_img, p)
     show(axd["u"], u_img, r"$u(x, y)$", cmap="viridis")
     # Résidu en log10|r|, échelle bornée aux percentiles 1-99 % (points aberrants saturés)
     log_r = np.log10(np.maximum(np.abs(r_img), 1e-16))
@@ -102,12 +115,12 @@ def plot_results(i, p, u_model, rho_model, history, adam_ends):
     rp = -divergence(conductivity(rhop, p) * grad(up, xp), xp) - 1.0
     def to_img(t):  # (N, 1) -> image (y, x) pour imshow(origin="lower")
         return t.detach().cpu().numpy().reshape(N_PLOT, N_PLOT).T
-    return draw_figure(i, to_img(rhop), to_img(up), to_img(rp), history, adam_ends)
+    return draw_figure(i, p, to_img(rhop), to_img(up), to_img(rp), history, adam_ends)
 
 # ----------------------------------------------------------------------------
 # Vérification : u par différences finies (rho du réseau figé) vs u du réseau
 # ----------------------------------------------------------------------------
-def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
+def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seuil, rel_l2):
     fig, ax = plt.subplots(1, 4, figsize=(22, 5.2))
     u_min, u_max = min(u_nn.min(), u_fd.min()), max(u_nn.max(), u_fd.max())
     def show(a, img, title, extend="neither", **kw):
@@ -134,7 +147,7 @@ def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2)
     ax[3].grid(alpha=0.3)
     fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   P = {p:g}   |   J_PINN/J_ref = {J_nn / j_ref:.4e}   "
                  f"J_DF/J_ref = {J_fd / j_ref:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   "
-                 f"J_DF seuillé/J_ref = {J_seuil / j_ref:.4e}   |   "
+                 f"J_DF seuillé/J_ref = {J_seuil / j_ref:.4e} (volume {vol_seuil:.4f})   |   "
                  f"erreur L2 relative sur u = {rel_l2:.3e}")
     fig.tight_layout()
     fname = f"{i}_{OUT_FIG_FD}"
@@ -153,7 +166,11 @@ def compare_fd(i, eps, p, j_ref, u_model, rho_model):
     u_fd = solve_fd(rho_grid, g, p)
     J_fd = j_fd(u_fd, g)
     # Design seuillé à 0.5 (rho dans {0, 1}) : prix de l'interface diffuse à l'EPS courant
-    J_seuil = j_fd(solve_fd((rho_grid > 0.5).astype(float), g, p), g)
+    seuil = (rho_grid > 0.5).astype(float)
+    J_seuil = j_fd(solve_fd(seuil, g, p), g)
+    wg = np.full(len(g), g[1] - g[0])               # poids des trapèzes
+    wg[[0, -1]] *= 0.5
+    vol_seuil = float((np.outer(wg, wg) * seuil).sum())
     rel_l2 = float(np.sqrt(((u_nn - u_fd) ** 2).mean() / (u_fd ** 2).mean()))
-    fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2)
-    return fname, J_nn, J_fd, J_seuil, rel_l2
+    fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seuil, rel_l2)
+    return fname, J_nn, J_fd, J_seuil, vol_seuil, rel_l2

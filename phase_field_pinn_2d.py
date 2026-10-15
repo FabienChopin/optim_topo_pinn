@@ -101,7 +101,7 @@ for i in range(N_CYCLES):
     print(f"J_ref (rho homogène = V0, P = {P:g}) = {J_REF:.6e}")
     t0 = time.time()
     def live(tag, parts):   # aperçu du design en cours de palier
-        live_snapshot(rho_model, f"Cycle {i}   P = {P:g}   ε = {EPS:.2e}   {tag}\n"
+        live_snapshot(rho_model, P, f"Cycle {i}   P = {P:g}   ε = {EPS:.2e}   {tag}\n"
                                  f"J/J_ref = {parts['J/J_ref']:.4f}   gris = {parts['gris']:.3f}   "
                                  f"vol = {parts['volume']:.4f}")
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
@@ -172,7 +172,7 @@ for i in range(N_CYCLES):
                out_models)
     fig_name = plot_results(i, P, u_model, rho_model, history, adam_ends)
     print(f"Figures : {fig_name}   Modèles : {out_models}")
-    fig_fd, J_nn, J_fd, J_seuil, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
+    fig_fd, J_nn, J_fd, J_seuil, vol_seuil, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   erreur L2 relative sur u = {err_u:.3e}")
+          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e} (volume {vol_seuil:.4f})   erreur L2 relative sur u = {err_u:.3e}")
     EPS *= EPS_FACTOR
