@@ -12,6 +12,7 @@ P_MAX = 3.0
 P_STEP = 0.5
 V0 = 0.5                  # fraction volumique cible
 EPS0 = 0.1                # épaisseur d'interface initiale
+RHO_SCALE_BY_EPS = True   # rho = sigmoid(N / eps) si True, sigmoid(N) si False
 LAMBDA = 1e-2             # poids Van der Waals
 MU = 100.0                # pénalisation du volume
 BETA = 1e4                # poids du résidu fort (penalty all-at-once)
@@ -41,5 +42,5 @@ OUT_LIVE = f"live_rho_s{SEED}.png"   # aperçu écrasé à chaque mise à jour
 OUT_MODELS = f"modeles_phase_field_pinn_2d_s{SEED}.pt"
 N_FD = 499                # noeuds intérieurs par direction pour la vérification DF
 OUT_FIG_FD = f"comparaison_u_DF_s{SEED}.png"
-OUT_FORME = f"forme_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sans réseau)
+OUT_SHAPE = f"shape_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sans réseau)
 LOG_FILE = f"log_phase_field_pinn_2d_s{SEED}.txt"   # copie de toute la sortie console

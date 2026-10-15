@@ -36,7 +36,7 @@ from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, LIVE_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
                         MAX_CHUNKS, MAX_CHUNKS_RAMP, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
-from pinn import X, W, XJ, j_homogene, UNet, RhoNet, compute_losses
+from pinn import X, W, XJ, j_homogeneous, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd, live_snapshot
 
 _ = torch.manual_seed(SEED)
@@ -75,7 +75,7 @@ u_model = UNet().to(DEVICE)
 rho_model = RhoNet().to(DEVICE)
 params = list(u_model.parameters()) + list(rho_model.parameters())
 
-history = {k: [] for k in ["total", "J/J_ref", "residu", "vdw", "vol_pen", "volume", "gris"]}
+history = {k: [] for k in ["total", "J/J_ref", "residual", "vdw", "vol_pen", "volume", "grey"]}
 adam_ends = []   # indices de fin d'Adam (un par cycle), pour les figures
 def record(parts):
     for k in history:
@@ -83,14 +83,14 @@ def record(parts):
 
 def log(tag, it, parts):
     print(f"[{tag} {it:6d}] total={parts['total']:.4e}  J/Jref={parts['J/J_ref']:.4e}  "
-          f"res={parts['residu']:.3e}  vdw={parts['vdw']:.3e}  "
-          f"vol={parts['volume']:.4f}  gris={parts['gris']:.3f}")
+          f"res={parts['residual']:.3e}  vdw={parts['vdw']:.3e}  "
+          f"vol={parts['volume']:.4f}  gris={parts['grey']:.3f}")
 
 # ----------------------------------------------------------------------------
 # Entraînement : continuation sur EPS, chaque palier arrêté sur stabilité
 # ----------------------------------------------------------------------------
 print(f"Device : {DEVICE}   points de quadrature : {X.shape[0]} (+ {XJ.shape[0]} pour J)")
-J_REF = j_homogene(1.0)                               # mélange homogène rho = V0, P = 1
+J_REF = j_homogeneous(1.0)                               # mélange homogène rho = V0, P = 1
 print(f"J_ref (rho homogène = V0, P = 1) = {J_REF:.6e}")
 EPS = EPS0
 for i in range(N_CYCLES):
@@ -103,7 +103,7 @@ for i in range(N_CYCLES):
     t0 = time.time()
     def live(tag, parts):   # aperçu du design en cours de palier
         live_snapshot(rho_model, P, f"Cycle {i}   P = {P:g}   ε = {EPS:.2e}   {tag}\n"
-                                 f"J/J_ref = {parts['J/J_ref']:.4f}   gris = {parts['gris']:.3f}   "
+                                 f"J/J_ref = {parts['J/J_ref']:.4f}   gris = {parts['grey']:.3f}   "
                                  f"vol = {parts['volume']:.4f}")
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
     opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
@@ -148,7 +148,7 @@ for i in range(N_CYCLES):
         d_rho = (W * (rho_new - rho_old).abs()).sum().item()   # aire du design qui a changé
         rho_old = rho_new
         _, cur = compute_losses(u_model, rho_model, EPS, P, J_REF)
-        res_l2 = np.sqrt(cur["residu"])
+        res_l2 = np.sqrt(cur["residual"])
         d_loss = abs(cur["total"] - loss_old) / abs(loss_old)
         loss_old = cur["total"]
         print(f"  [tronçon {k:3d}] aire modifiée = {d_rho:.2e}   ||r||_L2 = {res_l2:.2e}   "
@@ -166,14 +166,14 @@ for i in range(N_CYCLES):
     _, final = compute_losses(u_model, rho_model, EPS, P, J_REF)
     log("Final", 0, final)
     print(f"J physique = {final['J/J_ref'] * J_REF:.6e}   "
-          f"||r||_L2 = {np.sqrt(final['residu']):.3e}   "
+          f"||r||_L2 = {np.sqrt(final['residual']):.3e}   "
           f"volume = {final['volume']:.5f} (cible {V0})")
     out_models = f"{i}_{OUT_MODELS}"
     torch.save({"u": u_model.state_dict(), "rho": rho_model.state_dict(), "eps": EPS, "p": P},
                out_models)
     fig_name = plot_results(i, P, u_model, rho_model, history, adam_ends)
     print(f"Figures : {fig_name}   Modèles : {out_models}")
-    fig_fd, J_nn, J_fd, J_seuil, vol_seuil, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
+    fig_fd, J_nn, J_fd, J_binary, vol_binary, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e} (volume {vol_seuil:.4f})   erreur L2 relative sur u = {err_u:.3e}")
+          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_binary / J_REF:.4e} (volume {vol_binary:.4f})   erreur L2 relative sur u = {err_u:.3e}")
     EPS *= EPS_FACTOR

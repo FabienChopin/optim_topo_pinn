@@ -5,7 +5,7 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from parametres import DEVICE, A1, A2, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE, OUT_FORME
+from parametres import DEVICE, A1, A2, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE, OUT_SHAPE
 from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
 
 def show_log_a(fig, a, rho_img, p):
@@ -67,7 +67,7 @@ def draw_figure(i, p, rho_img, u_img, r_img, history, adam_ends):
     total_hist = np.abs(np.asarray(history["total"]))
     ax_l.semilogy(it_axis, total_hist, color="k", lw=2.0, label="loss totale")
     sub = [("J/J_ref", 1.0, "J / J_ref", "tab:blue"),
-           ("residu", BETA, f"β · résidu   (β = {BETA:g})", "tab:red"),
+           ("residual", BETA, f"β · résidu   (β = {BETA:g})", "tab:red"),
            ("vdw", LAMBDA, f"λ · Van der Waals   (λ = {LAMBDA:g})", "tab:green"),
            ("vol_pen", MU, f"μ · volume   (μ = {MU:g})", "tab:purple")]
     for key, weight, label, color in sub:
@@ -94,7 +94,7 @@ def draw_figure(i, p, rho_img, u_img, r_img, history, adam_ends):
         axv.axvline(n, color="gray", ls="--", lw=1)
     axv.set_ylabel(r"$\int \rho\,dx$", color="tab:blue")
     axg = axv.twinx()
-    axg.plot(it_axis, history["gris"], color="tab:gray")
+    axg.plot(it_axis, history["grey"], color="tab:gray")
     axg.set_ylim(0.0, 1.0)
     axg.set_ylabel(r"gris $4\int \rho(1-\rho)\,dx$", color="tab:gray")
     axv.set_title(r"volume et gris")
@@ -120,7 +120,7 @@ def plot_results(i, p, u_model, rho_model, history, adam_ends):
 # ----------------------------------------------------------------------------
 # Vérification : u par différences finies (rho du réseau figé) vs u du réseau
 # ----------------------------------------------------------------------------
-def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seuil, rel_l2):
+def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_binary, vol_binary, rel_l2):
     fig, ax = plt.subplots(1, 4, figsize=(22, 5.2))
     u_min, u_max = min(u_nn.min(), u_fd.min()), max(u_nn.max(), u_fd.max())
     def show(a, img, title, extend="neither", **kw):
@@ -147,7 +147,7 @@ def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seu
     ax[3].grid(alpha=0.3)
     fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   P = {p:g}   |   J_PINN/J_ref = {J_nn / j_ref:.4e}   "
                  f"J_DF/J_ref = {J_fd / j_ref:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   "
-                 f"J_DF seuillé/J_ref = {J_seuil / j_ref:.4e} (volume {vol_seuil:.4f})   |   "
+                 f"J_DF seuillé/J_ref = {J_binary / j_ref:.4e} (volume {vol_binary:.4f})   |   "
                  f"erreur L2 relative sur u = {rel_l2:.3e}")
     fig.tight_layout()
     fname = f"{i}_{OUT_FIG_FD}"
@@ -166,15 +166,15 @@ def compare_fd(i, eps, p, j_ref, u_model, rho_model):
     u_fd = solve_fd(rho_grid, g, p)
     J_fd = j_fd(u_fd, g)
     # Design seuillé à 0.5 (rho dans {0, 1}) : prix de l'interface diffuse à l'EPS courant
-    seuil = (rho_grid > 0.5).astype(float)
-    J_seuil = j_fd(solve_fd(seuil, g, p), g)
+    binary = (rho_grid > 0.5).astype(float)
+    J_binary = j_fd(solve_fd(binary, g, p), g)
     wg = np.full(len(g), g[1] - g[0])               # poids des trapèzes
     wg[[0, -1]] *= 0.5
-    vol_seuil = float((np.outer(wg, wg) * seuil).sum())
+    vol_binary = float((np.outer(wg, wg) * binary).sum())
     # La forme elle-même (le livrable), relisible sans torch ni réseau : np.load(...)
-    np.savez(f"{i}_{OUT_FORME}", x=g, y=g, rho=rho_grid, seuil=seuil.astype(np.uint8),
-             volume=float((np.outer(wg, wg) * rho_grid).sum()), volume_seuil=vol_seuil,
-             J_DF=J_fd, J_DF_seuil=J_seuil, J_ref=j_ref, eps=eps, p=p)
+    np.savez(f"{i}_{OUT_SHAPE}", x=g, y=g, rho=rho_grid, binary=binary.astype(np.uint8),
+             volume=float((np.outer(wg, wg) * rho_grid).sum()), volume_binary=vol_binary,
+             J_DF=J_fd, J_DF_binary=J_binary, J_ref=j_ref, eps=eps, p=p)
     rel_l2 = float(np.sqrt(((u_nn - u_fd) ** 2).mean() / (u_fd ** 2).mean()))
-    fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, vol_seuil, rel_l2)
-    return fname, J_nn, J_fd, J_seuil, vol_seuil, rel_l2
+    fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_binary, vol_binary, rel_l2)
+    return fname, J_nn, J_fd, J_binary, vol_binary, rel_l2

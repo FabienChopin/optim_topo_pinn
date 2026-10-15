@@ -2,3 +2,4 @@
 *.pt
 log_*.txt
 __pycache__/
+*.npz
