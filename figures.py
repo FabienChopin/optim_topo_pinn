@@ -4,8 +4,43 @@ import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD
+from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD, OUT_LIVE
 from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
+
+# ----------------------------------------------------------------------------
+# Aperçu en cours d'entraînement : rho seul, fichier OUT_LIVE écrasé à chaque appel.
+# Sous Jupyter / IPython, l'image est aussi affichée et mise à jour sur place.
+# ----------------------------------------------------------------------------
+try:
+    from IPython import get_ipython
+    from IPython.display import Image, display
+    _IPYTHON = get_ipython() is not None
+except ImportError:
+    _IPYTHON = False
+_live_handle = None
+
+def live_snapshot(rho_model, title):
+    global _live_handle
+    g = np.linspace(0.0, 1.0, N_PLOT)
+    gx, gy = np.meshgrid(g, g, indexing="ij")
+    pts = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1), device=DEVICE)
+    with torch.no_grad():
+        rho_img = rho_model(pts).cpu().numpy().reshape(N_PLOT, N_PLOT).T
+    fig, ax = plt.subplots(figsize=(6, 5.5))
+    im = ax.imshow(rho_img, origin="lower", extent=(0, 1, 0, 1), cmap="gray_r", vmin=0.0, vmax=1.0)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    for xb in (J_A, J_B):
+        ax.axvline(xb, color="tab:orange", ls="--", lw=1.2)
+    ax.set_title(title, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(OUT_LIVE, dpi=80)
+    plt.close(fig)
+    if _IPYTHON:
+        img = Image(filename=OUT_LIVE)
+        if _live_handle is None:
+            _live_handle = display(img, display_id=True)
+        else:
+            _live_handle.update(img)
 
 def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     fig, axd = plt.subplot_mosaic([["rho", "u", "res"], ["loss", "loss", "vol"]], figsize=(18, 10))

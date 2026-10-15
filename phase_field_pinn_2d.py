@@ -33,11 +33,11 @@ import time
 import numpy as np
 import torch
 from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
-                        ADAM_ITERS, ADAM_LR, LOG_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
+                        ADAM_ITERS, ADAM_LR, LOG_EVERY, LIVE_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
                         MAX_CHUNKS, MAX_CHUNKS_RAMP, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
 from pinn import X, W, XJ, j_homogene, UNet, RhoNet, compute_losses
-from figures import plot_results, compare_fd
+from figures import plot_results, compare_fd, live_snapshot
 
 _ = torch.manual_seed(SEED)
 # ----------------------------------------------------------------------------
@@ -100,6 +100,10 @@ for i in range(N_CYCLES):
     J_REF = j_homogene(P)                             # design homogène rho = V0 au P courant
     print(f"J_ref (rho homogène = V0, P = {P:g}) = {J_REF:.6e}")
     t0 = time.time()
+    def live(tag, parts):   # aperçu du design en cours de palier
+        live_snapshot(rho_model, f"Cycle {i}   P = {P:g}   ε = {EPS:.2e}   {tag}\n"
+                                 f"J/J_ref = {parts['J/J_ref']:.4f}   gris = {parts['gris']:.3f}   "
+                                 f"vol = {parts['volume']:.4f}")
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
     opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
     for it in range(1, n_adam + 1):
@@ -110,6 +114,8 @@ for i in range(N_CYCLES):
         record(parts)
         if it % LOG_EVERY == 0 or it == 1:
             log("Adam", it, parts)
+        if it % LIVE_EVERY == 0:
+            live(f"Adam {it}", parts)
     adam_ends.append(len(history["total"]))
     # Un seul L-BFGS par palier (historique conservé d'un tronçon à l'autre)
     opt_lbfgs = torch.optim.LBFGS(params, lr=1.0, max_iter=LBFGS_CHUNK,
@@ -126,6 +132,8 @@ for i in range(N_CYCLES):
         n_eval[0] += 1
         if n_eval[0] % LOG_EVERY == 0:
             log("LBFGS eval", n_eval[0], parts)
+        if n_eval[0] % LIVE_EVERY == 0:
+            live(f"L-BFGS eval {n_eval[0]}", parts)
         return total
     with torch.no_grad():
         rho_old = rho_model(X)
