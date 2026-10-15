@@ -64,7 +64,23 @@ rho = 1 que si P >= A1/A2 = 100.
   le gain fictif du gris et déplace l'interface droite (0.865 au lieu de 0.80).
 - PINN avec EPS -> 1e-8 : sigmoid(N / 1e-8) est un échelon, binaire par construction ;
   l'interface ne contient plus aucun point de Gauss, le design est figé. Juger sur J exact.
-- `pinn_1d.py` : option `INTERP = "mix"` (J_ref inchangé). À lancer : band, INTERP = "mix".
+- `pinn_1d.py` : option `INTERP = "mix"` (J_ref inchangé, P_MAX forcé à 1), réseau 16 x 2.
+
+### PINN 1D band, INTERP = "mix" (CPU, ~5 ms par évaluation)
+| Run | J exact / J_ref | gris | seuillé (volume) |
+|---|---|---|---|
+| MAX_CHUNKS = 4 (plafond atteint à presque tous les cycles) | 0.450 | 0.38 | 0.404 (0.498) |
+| MAX_CHUNKS = 20 : stable à 0.44 jusqu'à EPS = 0.02, puis effondrement à EPS = 0.016 | 5.37 | 0.06 | 4.29 (0.786) |
+
+- Le PINN reste sur une rampe grise à droite (rho 0 -> 0.65 sur [0.6, 1]). Ce n'est pas un
+  minimum du problème exact : L-BFGS-B sur grille, parti de cette rampe, va à 0.326 (binaire).
+- À chaque changement d'EPS, BETA * résidu passe de ~0.005 à 1.5e4-3e4 : rho = sigmoid(N / eps)
+  change alors que u reste figé. Avec la loi mix, A est très sensible à rho près de 1
+  (dA/drho = 99 A^2 ; A(0.99) = 0.50) : la queue de la sigmoïde dans le conducteur suffit.
+  Le L-BFGS passe le cycle à résorber ce pic ; à EPS = 0.016 il fait un pas qui détruit le design.
+- Pistes : (1) à chaque nouvel EPS, réajuster u seul (rho figé) avant l'optimisation conjointe ;
+  (2) formulation mixte u' = R(rho) q, q' = -1 avec R = 1/A linéaire en rho pour la loi mix
+  (q régulier à travers les interfaces, problème bien conditionné).
 
 ## 1D (`pinn_1d.py`, évaluateur exact, quelques dizaines de secondes par run)
 - tracking : SIMP 0.003, PINN reste une rampe sigmoïde unique (0.77).

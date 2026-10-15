@@ -35,8 +35,10 @@ PROBLEM = "band"
 TRACKING_LAYERS = [(0.05, 0.15), (0.30, 0.34), (0.50, 0.70), (0.82, 0.85)]   # couches isolantes rho = 0
 SEED = 3
 A1, A2 = 1.0, 0.01
-INTERP = "simp"           # "simp" : A2 + (A1 - A2) rho^P ; "mix" : 1/A = rho/A1 + (1 - rho)/A2
+INTERP = "mix"            # "simp" : A2 + (A1 - A2) rho^P ; "mix" : 1/A = rho/A1 + (1 - rho)/A2
 P_MAX, P_STEP = 3.0, 0.5
+if INTERP == "mix":
+    P_MAX = 1.0           # pas de pénalisation : continuation sur EPS seulement
 P_AFTER_EPS = False       # True : EPS descend d'abord à P = 1, puis P monte à EPS final
 EPS0 = 0.1
 EPS_FACTOR = 10 ** (-0.1)
@@ -46,7 +48,7 @@ LAMBDA = 1e-2             # Van der Waals
 MU = 100.0                # volume
 BETA = 1e4                # résidu fort
 N_ELEMENTS, N_GAUSS_PER_ELEMENT = 50, 6    # Gauss composite (300 points), bornes des bandes alignées
-WIDTH, DEPTH = 32, 3
+WIDTH, DEPTH = 16, 2      # petit réseau : calcul sur CPU
 ADAM_ITERS, ADAM_LR = 1000, 1e-3
 LBFGS_CHUNK = 300
 MAX_CHUNKS, MAX_CHUNKS_RAMP = 4, 2
@@ -114,7 +116,7 @@ def simp_reference(n=1000, iters_per_p=300):
     p_values = list(np.arange(1.0, P_MAX + 1e-9, P_STEP))
     J_per_p = []
     for p in p_values:
-        for _ in range(iters_per_p):
+        for _ in range(iters_per_p * 5 // len(p_values)):    # même budget total (1500)
             r = rho.clone().requires_grad_(True)
             J = (w * (exact_u(r, p, xc) - ut) ** 2).sum() / n
             J.backward()
@@ -127,7 +129,7 @@ def simp_reference(n=1000, iters_per_p=300):
                 lo, hi = (lo, eta) if new.mean() > V0 else (eta, hi)
             rho = new
         J_per_p.append(f"P = {p:g} : {J.item() / J_REF:.4f}")
-    print("Référence SIMP 1D, J/J_ref par palier de P :  " + "   ".join(J_per_p))
+    print(f"Référence {INTERP} 1D (gradient projeté), J/J_ref par palier de P :  " + "   ".join(J_per_p))
     rho = np.interp(XC, xc.numpy(), rho.numpy())
     return rho, float(exact_J(rho, P_MAX)) / J_REF
 
@@ -235,7 +237,7 @@ def main():
           f"P_AFTER_EPS = {P_AFTER_EPS}   RHO_SCALE_BY_EPS = {RHO_SCALE_BY_EPS}   "
           f"LAMBDA = {LAMBDA:g}   BETA = {BETA:g}   INTERP = {INTERP}")
     rho_simp, J_simp = simp_reference()
-    print(f"Référence SIMP 1D : J/J_ref = {J_simp:.4f}")
+    print(f"Référence {INTERP} 1D : J/J_ref = {J_simp:.4f}")
     u_model, rho_model = UNet(), RhoNet()
     params = list(u_model.parameters()) + list(rho_model.parameters())
     snapshots = []
@@ -280,7 +282,7 @@ def main():
                 break
         ev = evaluate(rho_model, p)
         snapshots.append((eps, p, ev["rho"]))
-        line = (f"Cycle {i:2d}  EPS = {eps:.3f}  P = {p:g}  [{status}, {k} tronçons, {time.time() - t0:4.1f} s]  "
+        line = (f"Cycle {i:2d}  EPS = {eps:.3f}{f'  P = {p:g}' if INTERP == 'simp' else ''}  [{status}, {k} tronçons, {time.time() - t0:4.1f} s]  "
                 f"J_PINN/J_ref = {cur['J/J_ref']:.4f}  J_exact/J_ref = {ev['J_exact']:.4f}  "
                 f"seuillé = {ev['J_binary']:.4f} (vol {ev['vol_binary']:.3f})  gris = {cur['grey']:.3f}  "
                 f"vol = {cur['volume']:.3f}  ||r|| = {np.sqrt(cur['residual']):.1e}")
@@ -295,7 +297,7 @@ def draw(snapshots, rho_simp, J_simp, u_model, rho_model, p):
     cmap = plt.get_cmap("viridis")
     for k, (eps, p_k, rho) in enumerate(snapshots):
         ax[0].plot(XC, rho, color=cmap(k / max(1, len(snapshots) - 1)), lw=1.0,
-                   label=f"ε = {eps:.3f}, P = {p_k:g}")
+                   label=f"ε = {eps:.3f}" + (f", P = {p_k:g}" if INTERP == "simp" else ""))
     ax[0].plot(XC, rho_simp, "k--", lw=1.2, label=f"référence {INTERP} (J/J_ref = {J_simp:.3f})")
     if RHO_TRUE is not None:
         ax[0].fill_between(XC, 0, RHO_TRUE, color="tab:orange", alpha=0.25, label="rho vrai")
