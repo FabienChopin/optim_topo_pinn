@@ -101,6 +101,7 @@ def simp_reference(n=1000, iters_per_p=300):
     ut = torch.tensor(np.interp((np.arange(n) + 0.5) / n, XC, U_TARGET_EXACT))
     rho = torch.full((n,), V0)
     p_values = list(np.arange(1.0, P_MAX + 1e-9, P_STEP))
+    J_per_p = []
     for p in p_values:
         for _ in range(iters_per_p):
             r = rho.clone().requires_grad_(True)
@@ -114,6 +115,8 @@ def simp_reference(n=1000, iters_per_p=300):
                 new = (target + eta).clamp(0.0, 1.0)
                 lo, hi = (lo, eta) if new.mean() > V0 else (eta, hi)
             rho = new
+        J_per_p.append(f"P = {p:g} : {J.item() / J_REF:.4f}")
+    print("Référence SIMP 1D, J/J_ref par palier de P :  " + "   ".join(J_per_p))
     rho = np.interp(XC, xc.numpy(), rho.numpy())
     return rho, float(exact_J(rho, P_MAX)) / J_REF
 

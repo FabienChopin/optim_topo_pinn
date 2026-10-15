@@ -38,7 +38,30 @@ longueur au moment de la montée en P fixe la topologie.
 - R0 (QUICK, SEED = 3) : douve épaisse ("boule") à droite de la bande, J_DF/J_ref = 0.93,
   seuillé 0.57 (volume 0.38), gris 0.65. Bonne idée, échelle grossière.
 
-## Prochain run : ordre des continuations inversé
+- P_AFTER_EPS (QUICK, SEED = 3) : dégradé lisse sans paroi ; J/J_ref 0.53 à P = 1 (SIMP 0.31)
+  puis 1.17 à P = 3. Le PINN optimise mal dès le problème relaxé.
+
+## 1D (`pinn_1d.py`, évaluateur exact, quelques dizaines de secondes par run)
+- tracking : SIMP 0.003, PINN reste une rampe sigmoïde unique (0.77).
+- two_bands (V0 = 0.5) : peu instructif (SIMP 0.90 à P = 3, design optimal gris). Avec
+  sigmoid(N/eps), effondrement à EPS = 0.01 (rho = 0 partout, sans retour) ; pas avec sigmoid(N).
+- band, effet de BETA (J exact / J_ref) :
+
+  | BETA | P = 1 | P = 3 | couche isolante après la bande |
+  |---|---|---|---|
+  | SIMP | 0.19 | 0.22 | oui |
+  | 1e4 | 0.48 | 0.60 | non (creux lisse vers 0.2) |
+  | 1e3 | 0.40 | 0.60 | partielle, instable |
+  | 1e2 | 0.25 | 0.27 | oui, forme proche de SIMP |
+
+  Avec BETA = 1e4, la pénalité sur le résidu rend les interfaces nettes trop chères (u
+  difficile à représenter) : la loss préfère un design lisse. J est exact : le gain avec
+  BETA = 1e2 n'est pas un artefact du résidu.
+
+## Prochain run 2D
+`QUICK = True`, SEED = 3, `BETA = 1e2` (le reste par défaut). Vérifier ||r|| et J_DF.
+
+## Ancien : ordre des continuations inversé
 `QUICK = True`, `P_AFTER_EPS = True`, SEED = 3 : EPS 0.1 -> 0.016 à P = 1 (5 paliers), puis
 P 1.5 -> 3 à EPS = 0.016 (9 cycles, ~18 min). Question : la paroi fine apparaît-elle ?
 
