@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, LIVE_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
-                        MAX_CHUNKS, MAX_CHUNKS_RAMP, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
+                        MAX_CHUNKS, MAX_CHUNKS_RAMP, P_AFTER_EPS, N_EPS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
 from pinn import X, W, XJ, j_homogeneous, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd, live_snapshot
@@ -66,7 +66,7 @@ _log_handle = open(LOG_FILE, "a", encoding="utf-8")
 sys.stdout = Tee(sys.stdout, _log_handle)
 sys.stderr = Tee(sys.stderr, _log_handle)
 print(f"\n########## Lancement {time.strftime('%Y-%m-%d %H:%M:%S')}   SEED = {SEED} ##########")
-print(f"P = 1 -> {P_MAX} (pas {P_STEP})  V0 = {V0}  EPS0 = {EPS0}  LAMBDA = {LAMBDA}  MU = {MU}  BETA = {BETA}  "
+print(f"P = 1 -> {P_MAX} (pas {P_STEP}, après EPS : {P_AFTER_EPS})  V0 = {V0}  EPS0 = {EPS0}  LAMBDA = {LAMBDA}  MU = {MU}  BETA = {BETA}  "
       f"N_GAUSS = {N_GAUSS}  WIDTH x DEPTH = {WIDTH} x {DEPTH}  N_CYCLES = {N_CYCLES}")
 # ----------------------------------------------------------------------------
 # Réseaux et historique
@@ -92,12 +92,16 @@ def log(tag, it, parts):
 print(f"Device : {DEVICE}   points de quadrature : {X.shape[0]} (+ {XJ.shape[0]} pour J)")
 J_REF = j_homogeneous(1.0)                               # mélange homogène rho = V0, P = 1
 print(f"J_ref (rho homogène = V0, P = 1) = {J_REF:.6e}")
-EPS = EPS0
 for i in range(N_CYCLES):
     last_cycle = (i == N_CYCLES - 1)
     tol_rho = TOL_RHO_FINAL if last_cycle else TOL_RHO
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
-    P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
+    if P_AFTER_EPS:                                 # EPS d'abord (P = 1), puis P à EPS final
+        EPS = EPS0 * EPS_FACTOR ** min(i, N_EPS - 1)
+        P = 1.0 if i < N_EPS else min(P_MAX, 1.0 + P_STEP * (i - N_EPS + 1))
+    else:                                           # EPS et P ensemble
+        EPS = EPS0 * EPS_FACTOR ** i
+        P = min(P_MAX, 1.0 + P_STEP * i)
     rho_model.eps = EPS                             # rho = sigmoid(N / EPS) : l'interface s'affine
     print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
     t0 = time.time()
@@ -176,4 +180,3 @@ for i in range(N_CYCLES):
     fig_fd, J_nn, J_fd, J_binary, vol_binary, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
           f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_binary / J_REF:.4e} (volume {vol_binary:.4f})   erreur L2 relative sur u = {err_u:.3e}")
-    EPS *= EPS_FACTOR

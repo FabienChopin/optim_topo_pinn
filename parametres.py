@@ -45,6 +45,13 @@ OUT_FIG_FD = f"comparaison_u_DF_s{SEED}.png"
 OUT_SHAPE = f"shape_s{SEED}.npz"   # rho et design seuillé sur la grille DF (sans réseau)
 LOG_FILE = f"log_phase_field_pinn_2d_s{SEED}.txt"   # copie de toute la sortie console
 
+# Ordre des continuations. False : P monte pendant que EPS descend (P = 3 dès EPS ~ 0.04 :
+# interfaces larges de ~4.4 EPS ~ 0.18, la topologie se fige à cette échelle grossière).
+# True : EPS descend d'abord à P = 1 (le gris ne coûte rien, le champ peut porter des détails
+# fins), puis P monte à EPS final. Cycles : N_EPS paliers en EPS, puis la montée en P.
+P_AFTER_EPS = False
+N_EPS = 11                # paliers de descente de EPS quand P_AFTER_EPS (0.1 -> 0.01)
+
 # ----------------------------------------------------------------------------
 # Mode rapide : tester une intuition sur la topologie (~10-12 min au lieu de ~45 min).
 # La topologie se décide pendant la montée en P : on s'arrête à l'arrivée à P = P_MAX
@@ -58,3 +65,10 @@ if QUICK:
     MAX_CHUNKS = 3            # le cycle à P = P_MAX est plafonné comme les autres
     N_FD = 199
     N_PLOT = 101
+
+N_P_RAMP = round((P_MAX - 1.0) / P_STEP)      # paliers de montée en P (1.5, 2, 2.5, 3)
+if P_AFTER_EPS:
+    if QUICK:
+        EPS_FACTOR = 10 ** (-0.2)             # 0.1 -> 0.016 en 5 paliers
+        N_EPS = 5
+    N_CYCLES = N_EPS + N_P_RAMP               # se termine à l'arrivée à P = P_MAX

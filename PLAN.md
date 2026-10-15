@@ -27,6 +27,20 @@ Référence SIMP (`reference_simp_df.py`, évaluateur DF du PINN) :
 | 0.02 | 0.1786 | 0.1720 (0.498) |
 | 0.03 | 0.1858 | 0.1807 (0.500) |
 | 0.05 | 0.2068 | 0.1942 (0.500) |
+| 0.10 (grille 50) | 0.2803 | 0.2275 (0.496) |
+| 0.15 (grille 50) | 0.3741 | 0.2870 (0.496) |
+
+Avec un filtre de la taille de l'interface du PINN au moment où P monte (~0.15), SIMP donne
+la même forme que le PINN R0 : douve épaisse et bombée à droite de la bande. L'échelle de
+longueur au moment de la montée en P fixe la topologie.
+
+## Résultats
+- R0 (QUICK, SEED = 3) : douve épaisse ("boule") à droite de la bande, J_DF/J_ref = 0.93,
+  seuillé 0.57 (volume 0.38), gris 0.65. Bonne idée, échelle grossière.
+
+## Prochain run : ordre des continuations inversé
+`QUICK = True`, `P_AFTER_EPS = True`, SEED = 3 : EPS 0.1 -> 0.016 à P = 1 (5 paliers), puis
+P 1.5 -> 3 à EPS = 0.016 (9 cycles, ~18 min). Question : la paroi fine apparaît-elle ?
 
 Même topologie pour les trois rayons : massif conducteur à gauche englobant la bande, paroi
 isolante fine juste à droite de la bande, doigt et bras conducteurs dans la moitié droite.
