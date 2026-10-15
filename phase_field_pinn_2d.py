@@ -14,8 +14,8 @@
 #       + lambda * int (eps |grad rho|^2 + rho^2 (1-rho)^2 / eps) dx  (Van der Waals)
 #       + mu     * (int rho dx - V0)^2                                (volume)
 #
-# J_ref = J de la solution homogène rho = V0, calculée par série de Fourier
-# (solution de -a Lap u = 1 sur le carré unité, u = 0 au bord).
+# J_ref = J du design homogène rho = V0 au P du cycle courant (résolution DF), recalculé
+# à chaque cycle : J/J_ref < 1 <=> le design bat le matériau homogène.
 #
 # Discrétisation
 #     - Gauss-Legendre tensoriel N_GAUSS x N_GAUSS sur [0, 1]^2 (résidu, VdW, volume)
@@ -36,7 +36,7 @@ from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
                         MAX_CHUNKS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
-from pinn import X, W, XJ, J_REF, j_homogene, UNet, RhoNet, compute_losses
+from pinn import X, W, XJ, j_homogene, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd
 
 _ = torch.manual_seed(SEED)
@@ -90,7 +90,6 @@ def log(tag, it, parts):
 # Entraînement : continuation sur EPS, chaque palier arrêté sur stabilité
 # ----------------------------------------------------------------------------
 print(f"Device : {DEVICE}   points de quadrature : {X.shape[0]} (+ {XJ.shape[0]} pour J)")
-print(f"J_ref (rho homogène = V0) = {J_REF:.6e}")
 EPS = EPS0
 for i in range(N_CYCLES):
     last_cycle = (i == N_CYCLES - 1)
@@ -98,14 +97,14 @@ for i in range(N_CYCLES):
     tol_res = TOL_RES_FINAL if last_cycle else TOL_RES
     P = min(P_MAX, 1.0 + P_STEP * i)                # continuation SIMP
     print(f"\n===== Cycle {i}   {time.strftime('%H:%M:%S')}   EPS = {EPS:.3e}   P = {P:g}   (tol aire modifiée {tol_rho:.0e}, tol ||r|| {tol_res:.0e}) =====")
-    J_hom = j_homogene(P)                             # design homogène rho = V0 au P courant
-    print(f"J_hom(P)/J_ref = {J_hom / J_REF:.4e}   (à battre : J/J_ref doit passer dessous)")
+    J_REF = j_homogene(P)                             # design homogène rho = V0 au P courant
+    print(f"J_ref (rho homogène = V0, P = {P:g}) = {J_REF:.6e}")
     t0 = time.time()
     n_adam = ADAM_ITERS if i == 0 else 0          # Adam au premier palier seulement
     opt_adam = torch.optim.Adam(params, lr=ADAM_LR)
     for it in range(1, n_adam + 1):
         opt_adam.zero_grad()
-        total, parts = compute_losses(u_model, rho_model, EPS, P)
+        total, parts = compute_losses(u_model, rho_model, EPS, P, J_REF)
         total.backward()
         opt_adam.step()
         record(parts)
@@ -121,7 +120,7 @@ for i in range(N_CYCLES):
     n_eval = [0]
     def closure():
         opt_lbfgs.zero_grad()
-        total, parts = compute_losses(u_model, rho_model, EPS, P)
+        total, parts = compute_losses(u_model, rho_model, EPS, P, J_REF)
         total.backward()
         record(parts)
         n_eval[0] += 1
@@ -130,7 +129,7 @@ for i in range(N_CYCLES):
         return total
     with torch.no_grad():
         rho_old = rho_model(X)
-    loss_old = compute_losses(u_model, rho_model, EPS, P)[1]["total"]
+    loss_old = compute_losses(u_model, rho_model, EPS, P, J_REF)[1]["total"]
     status = f"plafond de {MAX_CHUNKS} tronçons atteint"
     for k in range(1, MAX_CHUNKS + 1):
         _ = opt_lbfgs.step(closure)
@@ -138,7 +137,7 @@ for i in range(N_CYCLES):
             rho_new = rho_model(X)
         d_rho = (W * (rho_new - rho_old).abs()).sum().item()   # aire du design qui a changé
         rho_old = rho_new
-        _, cur = compute_losses(u_model, rho_model, EPS, P)
+        _, cur = compute_losses(u_model, rho_model, EPS, P, J_REF)
         res_l2 = np.sqrt(cur["residu"])
         d_loss = abs(cur["total"] - loss_old) / abs(loss_old)
         loss_old = cur["total"]
@@ -154,7 +153,7 @@ for i in range(N_CYCLES):
             break
     print(f"Arrêt du palier : {status}")
     print(f"Temps du cycle : {time.time() - t0:.1f} s")
-    _, final = compute_losses(u_model, rho_model, EPS, P)
+    _, final = compute_losses(u_model, rho_model, EPS, P, J_REF)
     log("Final", 0, final)
     print(f"J physique = {final['J/J_ref'] * J_REF:.6e}   "
           f"||r||_L2 = {np.sqrt(final['residu']):.3e}   "
@@ -164,7 +163,7 @@ for i in range(N_CYCLES):
                out_models)
     fig_name = plot_results(i, P, u_model, rho_model, history, adam_ends)
     print(f"Figures : {fig_name}   Modèles : {out_models}")
-    fig_fd, J_nn, J_fd, J_seuil, err_u = compare_fd(i, EPS, P, u_model, rho_model)
+    fig_fd, J_nn, J_fd, J_seuil, err_u = compare_fd(i, EPS, P, J_REF, u_model, rho_model)
     print(f"Comparaison DF : {fig_fd}   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   gain J_DF/J_hom(P) = {J_fd / J_hom:.4f}   erreur L2 relative sur u = {err_u:.3e}")
+          f"J_DF/J_ref = {J_fd / J_REF:.4e}   J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   erreur L2 relative sur u = {err_u:.3e}")
     EPS *= EPS_FACTOR

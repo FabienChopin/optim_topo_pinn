@@ -5,7 +5,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from parametres import DEVICE, V0, LAMBDA, MU, BETA, J_A, J_B, N_PLOT, OUT_FIG, OUT_FIG_FD
-from pinn import XJ, WJ, G_FD, J_REF, grad, divergence, conductivity, solve_fd, j_fd
+from pinn import XJ, WJ, G_FD, grad, divergence, conductivity, solve_fd, j_fd
 
 def draw_figure(i, rho_img, u_img, r_img, history, adam_ends):
     fig, axd = plt.subplot_mosaic([["rho", "u", "res"], ["loss", "loss", "vol"]], figsize=(18, 10))
@@ -84,7 +84,7 @@ def plot_results(i, p, u_model, rho_model, history, adam_ends):
 # ----------------------------------------------------------------------------
 # Vérification : u par différences finies (rho du réseau figé) vs u du réseau
 # ----------------------------------------------------------------------------
-def draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
+def draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
     fig, ax = plt.subplots(1, 4, figsize=(22, 5.2))
     u_min, u_max = min(u_nn.min(), u_fd.min()), max(u_nn.max(), u_fd.max())
     def show(a, img, title, extend="neither", **kw):
@@ -109,9 +109,9 @@ def draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
     ax[3].set_xlabel("x")
     ax[3].legend(loc="best")
     ax[3].grid(alpha=0.3)
-    fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   P = {p:g}   |   J_PINN/J_ref = {J_nn / J_REF:.4e}   "
-                 f"J_DF/J_ref = {J_fd / J_REF:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   "
-                 f"J_DF seuillé/J_ref = {J_seuil / J_REF:.4e}   |   "
+    fig.suptitle(f"Cycle {i}   ε = {eps:.2e}   P = {p:g}   |   J_PINN/J_ref = {J_nn / j_ref:.4e}   "
+                 f"J_DF/J_ref = {J_fd / j_ref:.4e}   (écart {abs(J_nn - J_fd) / J_fd:.2%})   "
+                 f"J_DF seuillé/J_ref = {J_seuil / j_ref:.4e}   |   "
                  f"erreur L2 relative sur u = {rel_l2:.3e}")
     fig.tight_layout()
     fname = f"{i}_{OUT_FIG_FD}"
@@ -119,7 +119,7 @@ def draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2):
     plt.close(fig)
     return fname
 
-def compare_fd(i, eps, p, u_model, rho_model):
+def compare_fd(i, eps, p, j_ref, u_model, rho_model):
     g = G_FD
     gx, gy = np.meshgrid(g, g, indexing="ij")
     pts = torch.tensor(np.stack([gx.ravel(), gy.ravel()], axis=1), device=DEVICE)
@@ -132,5 +132,5 @@ def compare_fd(i, eps, p, u_model, rho_model):
     # Design seuillé à 0.5 (rho dans {0, 1}) : prix de l'interface diffuse à l'EPS courant
     J_seuil = j_fd(solve_fd((rho_grid > 0.5).astype(float), g, p), g)
     rel_l2 = float(np.sqrt(((u_nn - u_fd) ** 2).mean() / (u_fd ** 2).mean()))
-    fname = draw_fd_figure(i, eps, p, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2)
+    fname = draw_fd_figure(i, eps, p, j_ref, g, u_nn, u_fd, J_nn, J_fd, J_seuil, rel_l2)
     return fname, J_nn, J_fd, J_seuil, rel_l2

@@ -5,7 +5,7 @@ import torch.nn as nn
 import scipy.sparse as sp
 import scipy.sparse.linalg as spla
 from scipy.interpolate import RegularGridInterpolator
-from parametres import (DEVICE, A1, A2, P_MAX, V0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
+from parametres import (DEVICE, A1, A2, V0, LAMBDA, MU, BETA, N_GAUSS, N_GAUSS_JX,
                         N_GAUSS_JY, J_A, J_B, WIDTH, DEPTH, N_FD)
 # ----------------------------------------------------------------------------
 # Quadrature de Gauss-Legendre (tensorielle)
@@ -80,7 +80,7 @@ def divergence(q, x):
 def conductivity(rho, p):
     return A2 + (A1 - A2) * rho ** p
 
-def compute_losses(u_model, rho_model, eps, p):
+def compute_losses(u_model, rho_model, eps, p, j_ref):
     x = X.clone().requires_grad_(True)
     u = u_model(x)
     gu = grad(u, x)                                   # (N, 2)
@@ -98,10 +98,10 @@ def compute_losses(u_model, rho_model, eps, p):
     L_vol = (vol - V0) ** 2
     # Objectif sur la bande [J_A, J_B] x [0, 1] (jeu de points dédié)
     J = (WJ * u_model(XJ) ** 2).sum()
-    total = J / J_REF + BETA * L_res + LAMBDA * L_vdw + MU * L_vol
+    total = J / j_ref + BETA * L_res + LAMBDA * L_vdw + MU * L_vol
     parts = {
         "total": total.item(),
-        "J/J_ref": (J / J_REF).item(),
+        "J/J_ref": (J / j_ref).item(),
         "residu": L_res.item(),
         "vdw": L_vdw.item(),
         "vol_pen": L_vol.item(),
@@ -141,12 +141,9 @@ def j_fd(u_grid, g):
     """J d'un champ u donné sur la grille g (interpolé aux points de Gauss de la bande)."""
     return float((WJ_np.ravel() * RegularGridInterpolator((g, g), u_grid)(XJ_np) ** 2).sum())
 
-# Normalisation de J : solution DF du design homogène rho = V0, avec P = P_MAX
-# (fixe pendant tout le run pour que les J restent comparables d'un cycle à l'autre)
 G_FD = np.linspace(0.0, 1.0, N_FD + 2)
 
 def j_homogene(p):
-    """J du design homogène rho = V0 à l'exposant p (référence au P courant)."""
+    """Normalisation de J : J du design homogène rho = V0 à l'exposant p, par DF.
+    Recalculée à chaque cycle : J/J_ref < 1 <=> le design bat le matériau homogène."""
     return j_fd(solve_fd(np.full((len(G_FD), len(G_FD)), V0), G_FD, p), G_FD)
-
-J_REF = j_homogene(P_MAX)
