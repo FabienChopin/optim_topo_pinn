@@ -30,6 +30,7 @@ EPS_FACTOR = 10 ** (-0.1) # EPS <- EPS * EPS_FACTOR après chaque palier (0.1 ->
 # Arrêt de chaque palier sur stabilité : L-BFGS par tronçons, contrôle entre tronçons
 LBFGS_CHUNK = 1500        # itérations L-BFGS par tronçon
 MAX_CHUNKS = 20           # plafond par palier (-> 30 000 itérations au plus)
+MAX_CHUNKS_RAMP = 3       # plafond tant que P < P_MAX : design provisoire, inutile de l'affiner
 TOL_RHO, TOL_RES = 1e-3, 1e-2              # paliers intermédiaires : aire modifiée, ||r||_L2
 TOL_RHO_FINAL, TOL_RES_FINAL = 2e-4, 2e-3  # dernier palier
 TOL_STAGNATION = 1e-6     # variation relative de la loss sur un tronçon en dessous de laquelle on s'arrête

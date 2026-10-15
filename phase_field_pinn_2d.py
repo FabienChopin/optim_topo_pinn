@@ -34,7 +34,7 @@ import numpy as np
 import torch
 from parametres import (SEED, DEVICE, P_MAX, P_STEP, V0, EPS0, LAMBDA, MU, BETA, N_GAUSS, WIDTH, DEPTH,
                         ADAM_ITERS, ADAM_LR, LOG_EVERY, N_CYCLES, EPS_FACTOR, LBFGS_CHUNK,
-                        MAX_CHUNKS, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
+                        MAX_CHUNKS, MAX_CHUNKS_RAMP, TOL_RHO, TOL_RES, TOL_RHO_FINAL, TOL_RES_FINAL,
                         TOL_STAGNATION, OUT_MODELS, LOG_FILE)
 from pinn import X, W, XJ, j_homogene, UNet, RhoNet, compute_losses
 from figures import plot_results, compare_fd
@@ -130,8 +130,9 @@ for i in range(N_CYCLES):
     with torch.no_grad():
         rho_old = rho_model(X)
     loss_old = compute_losses(u_model, rho_model, EPS, P, J_REF)[1]["total"]
-    status = f"plafond de {MAX_CHUNKS} tronçons atteint"
-    for k in range(1, MAX_CHUNKS + 1):
+    max_chunks = MAX_CHUNKS if P >= P_MAX else MAX_CHUNKS_RAMP
+    status = f"plafond de {max_chunks} tronçons atteint"
+    for k in range(1, max_chunks + 1):
         _ = opt_lbfgs.step(closure)
         with torch.no_grad():
             rho_new = rho_model(X)
