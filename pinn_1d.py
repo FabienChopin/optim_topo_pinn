@@ -3,7 +3,10 @@
 #
 #     min  J = int_0^1 w(x) (u - u_target)^2 dx
 #     s.c. -(A(rho) u')' = 1 sur [0, 1], u(0) = u(1) = 0, int rho = V0
-#     A = A2 + (A1 - A2) rho^P,  rho = sigmoid(N / eps)
+#     A = A2 + (A1 - A2) rho^P,  rho = sigmoid(N / eps)     (INTERP = "simp")
+#     1/A = rho/A1 + (1 - rho)/A2                          (INTERP = "mix", P ignoré)
+# "mix" est la loi exacte d'un mélange fin des deux matériaux en 1D (couches en série) :
+# le gris n'y est jamais plus conducteur qu'un vrai mélange binaire (cf. band_1d_binaire.py).
 #
 # Solution exacte pour tout rho : A u' = c - x, donc u(x) = int_0^x (c - s) / A ds avec c tel
 # que u(1) = 0. Sert d'évaluateur exact (pas de solveur) et de référence SIMP.
@@ -28,10 +31,11 @@ import matplotlib.pyplot as plt
 # ----------------------------------------------------------------------------
 # Paramètres
 # ----------------------------------------------------------------------------
-PROBLEM = "tracking"
+PROBLEM = "band"
 TRACKING_LAYERS = [(0.05, 0.15), (0.30, 0.34), (0.50, 0.70), (0.82, 0.85)]   # couches isolantes rho = 0
 SEED = 3
 A1, A2 = 1.0, 0.01
+INTERP = "simp"           # "simp" : A2 + (A1 - A2) rho^P ; "mix" : 1/A = rho/A1 + (1 - rho)/A2
 P_MAX, P_STEP = 3.0, 0.5
 P_AFTER_EPS = False       # True : EPS descend d'abord à P = 1, puis P monte à EPS final
 EPS0 = 0.1
@@ -48,7 +52,7 @@ LBFGS_CHUNK = 300
 MAX_CHUNKS, MAX_CHUNKS_RAMP = 4, 2
 TOL_RHO, TOL_RES, TOL_STAGNATION = 1e-3, 1e-2, 1e-6
 N_EXACT = 4000            # cellules de l'évaluateur exact
-OUT = f"pinn_1d_{PROBLEM}_s{SEED}"
+OUT = f"pinn_1d_{PROBLEM}_{INTERP}_s{SEED}"
 
 torch.set_default_dtype(torch.float64)
 torch.manual_seed(SEED)
@@ -62,11 +66,17 @@ def indicator(x, intervals):
         out[(x >= a) & (x <= b)] = 1.0
     return out
 
-def exact_u(rho, p, xc):
-    """u aux centres xc (cellules de largeur h) pour la densité rho (numpy ou torch)."""
+def conductivity(rho, p):
+    if INTERP == "mix":
+        return 1.0 / (rho / A1 + (1.0 - rho) / A2)
+    return A2 + (A1 - A2) * rho ** p
+
+def exact_u(rho, p, xc, A=None):
+    """u aux centres xc (cellules de largeur h) pour la densité rho (numpy ou torch),
+    ou pour la conductivité A donnée."""
     lib = torch if torch.is_tensor(rho) else np
     h = 1.0 / len(xc)
-    w = h / (A2 + (A1 - A2) * rho ** p)
+    w = h / (conductivity(rho, p) if A is None else A)
     c = (xc * w).sum() / w.sum()
     return lib.cumsum((c - xc) * w, 0) - 0.5 * (c - xc) * w
 
@@ -84,13 +94,14 @@ else:
 W_EXACT = indicator(XC, BANDS)
 U_TARGET_EXACT = exact_u(RHO_TRUE, 1.0, XC) if RHO_TRUE is not None else np.zeros(N_EXACT)
 
-def exact_J(rho, p):
-    u = exact_u(rho, p, XC if not torch.is_tensor(rho) else torch.tensor(XC))
+def exact_J(rho, p, A=None):
+    u = exact_u(rho, p, XC if not torch.is_tensor(rho) else torch.tensor(XC), A)
     ut = U_TARGET_EXACT if not torch.is_tensor(rho) else torch.tensor(U_TARGET_EXACT)
     w = W_EXACT if not torch.is_tensor(rho) else torch.tensor(W_EXACT)
     return (w * (u - ut) ** 2).sum() / N_EXACT
 
-J_REF = float(exact_J(np.full(N_EXACT, V0), 1.0))     # mélange homogène rho = V0, P = 1
+# matériau homogène A = A2 + (A1 - A2) V0 (SIMP P = 1), quelle que soit INTERP
+J_REF = float(exact_J(np.full(N_EXACT, V0), 1.0, np.full(N_EXACT, A2 + (A1 - A2) * V0)))
 
 # ----------------------------------------------------------------------------
 # Référence SIMP 1D (gradient exact par autograd sur la solution exacte, volume exact)
@@ -174,9 +185,6 @@ class RhoNet(nn.Module):
 def d_dx(y, x):
     return torch.autograd.grad(y, x, torch.ones_like(y), create_graph=True)[0]
 
-def conductivity(rho, p):
-    return A2 + (A1 - A2) * rho ** p
-
 def compute_losses(u_model, rho_model, eps, p):
     x = X.clone().requires_grad_(True)
     u = u_model(x)
@@ -225,7 +233,7 @@ def main():
     t_start = time.time()
     print(f"PROBLEM = {PROBLEM}   V0 = {V0:.3f}   J_ref = {J_REF:.4e}   SEED = {SEED}   "
           f"P_AFTER_EPS = {P_AFTER_EPS}   RHO_SCALE_BY_EPS = {RHO_SCALE_BY_EPS}   "
-          f"LAMBDA = {LAMBDA:g}   BETA = {BETA:g}")
+          f"LAMBDA = {LAMBDA:g}   BETA = {BETA:g}   INTERP = {INTERP}")
     rho_simp, J_simp = simp_reference()
     print(f"Référence SIMP 1D : J/J_ref = {J_simp:.4f}")
     u_model, rho_model = UNet(), RhoNet()
@@ -288,7 +296,7 @@ def draw(snapshots, rho_simp, J_simp, u_model, rho_model, p):
     for k, (eps, p_k, rho) in enumerate(snapshots):
         ax[0].plot(XC, rho, color=cmap(k / max(1, len(snapshots) - 1)), lw=1.0,
                    label=f"ε = {eps:.3f}, P = {p_k:g}")
-    ax[0].plot(XC, rho_simp, "k--", lw=1.2, label=f"SIMP (J/J_ref = {J_simp:.3f})")
+    ax[0].plot(XC, rho_simp, "k--", lw=1.2, label=f"référence {INTERP} (J/J_ref = {J_simp:.3f})")
     if RHO_TRUE is not None:
         ax[0].fill_between(XC, 0, RHO_TRUE, color="tab:orange", alpha=0.25, label="rho vrai")
     for a, b in BANDS if PROBLEM != "tracking" else []:
@@ -307,7 +315,7 @@ def draw(snapshots, rho_simp, J_simp, u_model, rho_model, p):
     ax[1].legend(fontsize=8)
     ax[1].set_title("u (dernier palier)")
     ax[2].plot(XC, np.log10(conductivity(rho_final, p)), "tab:purple", label="PINN")
-    ax[2].plot(XC, np.log10(conductivity(rho_simp, P_MAX)), "k--", label="SIMP")
+    ax[2].plot(XC, np.log10(conductivity(rho_simp, P_MAX)), "k--", label=f"référence {INTERP}")
     ax[2].set_ylim(np.log10(A2) - 0.1, 0.1)
     ax[2].set_title("log10 A (dernier palier)")
     ax[2].legend(fontsize=8)

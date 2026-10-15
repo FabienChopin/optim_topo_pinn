@@ -41,6 +41,31 @@ longueur au moment de la montée en P fixe la topologie.
 - P_AFTER_EPS (QUICK, SEED = 3) : dégradé lisse sans paroi ; J/J_ref 0.53 à P = 1 (SIMP 0.31)
   puis 1.17 à P = 3. Le PINN optimise mal dès le problème relaxé.
 
+## 1D band : pourquoi SIMP reste gris (`band_1d_binaire.py`, numpy + scipy, ~1 min)
+En 1D, u ne dépend que de 1/A, et un mélange fin des deux matériaux a pour conductivité la
+moyenne harmonique (couches en série) : 1/A_mix = rho/A1 + (1 - rho)/A2. SIMP P = 3 donne au
+gris A(0.5) = 0.134 contre 0.020 pour un vrai mélange : le gris est un matériau fictif,
+meilleur que tout design 0/1, et l'optimiseur l'exploite. SIMP ne le pénalise près de
+rho = 1 que si P >= A1/A2 = 100.
+
+| Méthode | J/J_ref | gris | J seuillé (volume) |
+|---|---|---|---|
+| SIMP P = 3 (valeur 0.22 = fictive) | 0.2172 | 0.47 | 0.412 (0.397) |
+| SIMP P = 100 | 0.3558 | 0.04 | 0.316 (0.515, volume violé) |
+| loi mix, sans régularisation | 0.3260 | 0.000 | 0.3260 (0.500) |
+| binaire, 2 interfaces optimisées (K = 1..4 testés) | 0.3260 | 0 | interfaces 0.299 / 0.799 |
+| champ de phase sur grille, SIMP P = 3, EPS = 3h | 0.2420 | 0.32 | 0.387 (0.432) |
+| champ de phase sur grille, mix, EPS = 3h | 0.3284 | 0.017 | 0.3266 (0.500) |
+
+- L'optimum 0/1 est J/J_ref = 0.326 : conducteur sur [0, 0.3], isolant sur [0.3, 0.8],
+  conducteur sur [0.8, 1]. Toute valeur plus basse (SIMP 0.19-0.22) est due au gris fictif.
+- Avec la loi mix, le problème relaxé est déjà binaire ; le champ de phase y converge
+  proprement (gris = largeur d'interface seulement). Avec SIMP, le double puits lutte contre
+  le gain fictif du gris et déplace l'interface droite (0.865 au lieu de 0.80).
+- PINN avec EPS -> 1e-8 : sigmoid(N / 1e-8) est un échelon, binaire par construction ;
+  l'interface ne contient plus aucun point de Gauss, le design est figé. Juger sur J exact.
+- `pinn_1d.py` : option `INTERP = "mix"` (J_ref inchangé). À lancer : band, INTERP = "mix".
+
 ## 1D (`pinn_1d.py`, évaluateur exact, quelques dizaines de secondes par run)
 - tracking : SIMP 0.003, PINN reste une rampe sigmoïde unique (0.77).
 - two_bands (V0 = 0.5) : peu instructif (SIMP 0.90 à P = 3, design optimal gris). Avec
