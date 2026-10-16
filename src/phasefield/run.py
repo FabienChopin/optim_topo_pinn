@@ -18,9 +18,9 @@ import torch
 
 from .config import load_config, to_toml
 from .models import MLP, DensityNet, StateNet
-from .problem import BandProblem1D
+from .problem import make_problem
 from .quadrature import Quadrature
-from .references import binary_optimum, relaxed_optimum
+from .references import compute_references
 from .train import Trainer
 
 log = logging.getLogger("phasefield")
@@ -61,7 +61,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     cfg = load_config(args.config, args.set)
 
-    torch.set_default_dtype(torch.float64)
+    torch.set_default_dtype(getattr(torch, cfg.run.dtype))   # réseaux et points ; références en float64
     seed_everything(cfg.run.seed)
     run_dir = make_run_dir(cfg.output.runs_dir, cfg.run.name, cfg.run.seed)
     (run_dir / "config.toml").write_text(to_toml(cfg), encoding="utf-8")
@@ -69,7 +69,7 @@ def main(argv=None):
     log.info(f"run : {run_dir}   (suivi : display -update 5 {run_dir / 'live.png'})")
     log.info("surcharges : " + (" ".join(args.set) or "aucune"))
 
-    problem = BandProblem1D(cfg.problem)
+    problem = make_problem(cfg)
     quad = Quadrature(problem.dim, cfg.quadrature.n_elements, cfg.quadrature.n_gauss,
                       problem.lo, problem.hi, cfg.run.device)
     if not all(np.isclose(quad.element_edges, b).any() for b in problem.band):
@@ -78,15 +78,10 @@ def main(argv=None):
     log.info(f"J_ref (ρ = V0 partout) = {problem.j_ref:.6e}   points de quadrature : {len(quad)}")
 
     t = time.time()
-    refs = {"band": problem.band, "v0": problem.v0,
-            "binary": binary_optimum(problem, seed=cfg.run.seed),
-            "relaxed": None}
-    refs["relaxed"] = relaxed_optimum(problem, q=cfg.continuation.q_max, binary=refs["binary"])
-    b, r = refs["binary"], refs["relaxed"]
-    log.info(f"optimum binaire : J/J_ref = {b['J']:.4f}, {b['n_interfaces']} interfaces en "
-             f"{np.round(b['edges'][1:-1], 4).tolist()}, ρ = {b['rho'].astype(int).tolist()}")
-    log.info(f"optimum relaxé (gris permis, q = {cfg.continuation.q_max:g}) : J/J_ref = {r['J']:.4f}, "
-             f"gris {r['grey']:.3f}   ({time.time() - t:.1f} s)")
+    refs = compute_references(problem, cfg)
+    for key in ("binary", "relaxed"):
+        log.info(refs[key]["label"])
+    log.info(f"références calculées en {time.time() - t:.1f} s")
 
     def mlp():
         return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi)
@@ -107,8 +102,8 @@ def main(argv=None):
                run_dir / "models" / "final.pt")
     metrics = {
         "status": status, "time_s": time.time() - trainer.t0, "j_ref": problem.j_ref,
-        "binary_optimum": {"J": b["J"], "interfaces": b["edges"][1:-1].tolist(), "rho": b["rho"].tolist()},
-        "relaxed_optimum": {"J": r["J"], "grey": r["grey"], "q": cfg.continuation.q_max},
+        "binary_reference": refs["binary"]["info"],
+        "relaxed_reference": refs["relaxed"]["info"],
         "stages": trainer.stages,
         "final": trainer.stages[-1] if trainer.stages else None,
     }

@@ -5,8 +5,10 @@
 name = "default"
 seed = 0
 device = "cpu"
+dtype = "float64"     # float32 : ~5x plus rapide sur GPU grand public (RTX), moins précis
 
 [problem]
+dim = 1               # 1 ou 2 (configs/2d.toml)
 # -(A(rho) u')' = source sur [0, 1], u = 0 au bord
 # A = a2 + (a1 - a2) rho / (1 + q (1 - rho))   (RAMP ; q par palier, voir [continuation])
 a1 = 1.0
@@ -51,4 +53,15 @@ lbfgs_history = 50
 runs_dir = "runs"
 plot_every = 100      # évaluations entre deux mises à jour de live.png
 log_every = 100       # évaluations entre deux lignes de journal
-n_exact = 4000        # cellules de la solution exacte (diagnostics)
+n_exact = 4000        # 1D : cellules de la solution exacte (diagnostics)
+n_grid = 200          # 2D : cellules par direction du solveur volumes finis (diagnostics, J_ref)
+
+[reference]
+# 2D seulement : optimisation par densité sur la grille volumes finis (n_cells x n_cells),
+# filtre de densité de rayon filter_radius, RAMP avec continuation de q jusqu'à q_penal
+# (n_q_steps paliers de iters_per_step itérations), puis seuillage au volume V0.
+n_cells = 100
+filter_radius = 0.03
+q_penal = 300.0
+n_q_steps = 6
+iters_per_step = 100

@@ -10,10 +10,12 @@ class RunConfig:
     name: str = "default"
     seed: int = 0
     device: str = "cpu"
+    dtype: str = "float64"
 
 
 @dataclass
 class ProblemConfig:
+    dim: int = 1
     a1: float = 1.0
     a2: float = 0.01
     v0: float = 0.5
@@ -76,6 +78,17 @@ class OutputConfig:
     plot_every: int = 100
     log_every: int = 100
     n_exact: int = 4000
+    n_grid: int = 200
+
+
+@dataclass
+class ReferenceConfig:
+    """Référence 2D : optimisation par densité (RAMP, filtre, adjoint) sur la grille volumes finis."""
+    n_cells: int = 100
+    filter_radius: float = 0.03
+    q_penal: float = 300.0
+    n_q_steps: int = 6
+    iters_per_step: int = 100
 
 
 @dataclass
@@ -88,6 +101,7 @@ class Config:
     continuation: ContinuationConfig = field(default_factory=ContinuationConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    reference: ReferenceConfig = field(default_factory=ReferenceConfig)
 
 
 def _parse_value(text: str):

@@ -45,7 +45,7 @@ class Trainer:
         return total
 
     def snapshot(self) -> dict:
-        snap = evaluate(self.problem, self.u_net, self.rho_net, self.cfg.output.n_exact, self.eps)
+        snap = evaluate(self.problem, self.u_net, self.rho_net, self.cfg.output, self.eps)
         self.checks.append({"eval": len(self.history["total"]),
                             **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "grey_floor")}})
         return snap
@@ -63,19 +63,20 @@ class Trainer:
             f"(monte après le palier {c.continuation.q_start + 1})",
             f"λ = {c.loss.lam:g}   β = {c.loss.beta:g}   μ = {c.loss.mu:g}",
             f"ε : {c.continuation.eps0:g} -> {c.continuation.eps_min:g} ({c.continuation.n_stages} paliers)",
-            f"points : {len(self.quad)} ({c.quadrature.n_elements} x {c.quadrature.n_gauss} Gauss)",
+            f"points : {len(self.quad)} ({c.quadrature.n_elements} x {c.quadrature.n_gauss} Gauss"
+            f"{' par direction' if self.problem.dim > 1 else ''})",
             f"réseaux : {c.model.width} x {c.model.depth} tanh",
             "",
             f"J PINN / J_ref       {h['J'][-1]:.4f}",
-            f"J exact / J_ref      {snap['J_exact']:.4f}",
+            f"J réf. / J_ref       {snap['J_exact']:.4f}   ({'exacte' if self.problem.dim == 1 else 'volumes finis'})",
             f"J seuillé / J_ref    {snap['J_binary']:.4f}",
-            f"optimum binaire      {self.refs['binary']['J']:.4f}",
-            f"optimum relaxé       {self.refs['relaxed']['J']:.4f}",
+            f"référence binaire    {self.refs['binary']['J']:.4f}",
+            f"référence relaxée    {self.refs['relaxed']['J']:.4f}",
             "",
             f"∫ρ                   {h['vol'][-1]:.4f}   (V0 = {c.problem.v0:g})",
             f"volume seuillé       {snap['vol_binary']:.4f}",
             f"gris G               {h['grey'][-1]:.4f}",
-            f"plancher 4ε·n        {snap['grey_floor']:.4f}   ({snap['n_interfaces']} interfaces)",
+            f"plancher 4ε·n        {snap['grey_floor']:.4f}   ({snap['interfaces_text']})",
             f"erreur L2 sur u      {snap['u_error']:.2e}",
         ])
         plotting.draw(path or self.run_dir / "live.png", h, self.checks, snap, self.refs, title, summary)
@@ -114,12 +115,12 @@ class Trainer:
             summary = {"stage": stage, "eps": self.eps, "q": self.problem.q, "evals": len(h["total"]),
                        "time_s": time.time() - t_stage,
                        **{k: h[k][-1] for k in ("total", *TERMS, "vol", "grey")},
-                       **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "n_interfaces",
+                       **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "interfaces",
                                                "grey_floor", "u_error")}}
             self.stages.append(summary)
             log.info(f"fin du palier {stage + 1} ({summary['time_s']:.1f} s) : J PINN {h['J'][-1]:.4f}  "
                      f"J exact {snap['J_exact']:.4f}  J seuillé {snap['J_binary']:.4f} "
                      f"(vol {snap['vol_binary']:.3f})  gris {h['grey'][-1]:.3f} (plancher {snap['grey_floor']:.3f})  "
-                     f"interfaces {snap['n_interfaces']}  erreur u {snap['u_error']:.2e}")
+                     f"{snap['interfaces_text']}  erreur u {snap['u_error']:.2e}")
             torch.save({"u": self.u_net.state_dict(), "rho": self.rho_net.state_dict(), "eps": self.eps},
                        self.run_dir / "models" / f"stage_{stage:02d}.pt")

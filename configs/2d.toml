@@ -1,0 +1,67 @@
+# Problème 2D sur [0, 1]^2 (même physique que configs/default.toml), à lancer sur GPU.
+#   python run.py --config configs/2d.toml --set run.seed=4 --set loss.lam=1e-3
+
+[run]
+name = "2d"
+seed = 0
+device = "cuda"
+dtype = "float32"     # float64 sur GPU de calcul (A100, H100) ; ~5x plus lent sur RTX
+
+[problem]
+dim = 2
+# -(A(rho) u')' = source sur [0, 1], u = 0 au bord
+# A = a2 + (a1 - a2) rho / (1 + q (1 - rho))   (RAMP ; q par palier, voir [continuation])
+a1 = 1.0
+a2 = 0.01
+v0 = 0.5              # volume cible de la phase rho = 1
+source = 1.0
+band = [0.2, 0.3]     # objectif J = int_band u^2
+
+[quadrature]
+# Gauss composite : n_elements x n_gauss points (bornes de la bande alignées sur les éléments)
+n_elements = 100      # par direction : 300 x 300 = 90 000 points
+n_gauss = 3
+
+[model]
+width = 32
+depth = 3             # couches cachées (tanh)
+
+[loss]
+# L = J / J_ref + beta * residu + lam * Van der Waals + mu * (int rho - v0)^2
+lam = 1e-2
+beta = 1e2
+mu = 1e2
+
+[continuation]
+# eps géométrique de eps0 à eps_min en n_stages paliers
+eps0 = 0.1
+eps_min = 8e-3      # écart max entre points : 3.9e-3
+n_stages = 8
+# q de RAMP : q0 jusqu'au palier q_start (compté depuis 0), puis linéaire jusqu'à q_max au dernier palier.
+# q = 0 : loi linéaire ; q = a1/a2 - 1 = 99 : loi harmonique (mélange exact en série) ; au-delà : gris pénalisé.
+q0 = 0.0
+q_max = 0.0
+q_start = 0
+
+[train]
+adam_iters = 2000     # premier palier seulement
+adam_lr = 1e-3
+lbfgs_iters = 1000    # à chaque palier
+lbfgs_history = 50
+
+[output]
+runs_dir = "runs"
+plot_every = 200      # évaluations entre deux mises à jour de live.png
+log_every = 100       # évaluations entre deux lignes de journal
+n_exact = 4000        # 1D : cellules de la solution exacte (diagnostics)
+n_grid = 200          # 2D : cellules par direction du solveur volumes finis (diagnostics, J_ref)
+
+[reference]
+# 2D seulement : optimisation par densité sur la grille volumes finis (n_cells x n_cells),
+# filtre de densité de rayon filter_radius, RAMP avec continuation de q jusqu'à q_penal
+# (n_q_steps paliers de iters_per_step itérations), puis seuillage au volume V0.
+n_cells = 100
+filter_radius = 0.03
+q_penal = 300.0
+n_q_steps = 6
+iters_per_step = 100

@@ -1,7 +1,5 @@
 """Quadrature de Gauss-Legendre composite sur un pavé [lo, hi]^d (produit tensoriel)."""
 
-import itertools
-
 import numpy as np
 import torch
 
@@ -21,12 +19,13 @@ class Quadrature:
     def __init__(self, dim: int, n_elements: int, n_gauss: int, lo: float = 0.0, hi: float = 1.0,
                  device: str = "cpu"):
         x1, w1 = gauss_composite_1d(n_elements, n_gauss, lo, hi)
-        pts = np.array(list(itertools.product(x1, repeat=dim)))
-        wts = np.prod(np.array(list(itertools.product(w1, repeat=dim))), axis=1)
+        pts = np.stack([g.ravel() for g in np.meshgrid(*[x1] * dim, indexing="ij")], axis=1)
+        wts = np.prod(np.stack([g.ravel() for g in np.meshgrid(*[w1] * dim, indexing="ij")], axis=1), axis=1)
         self.dim = dim
         self.element_edges = np.linspace(lo, hi, n_elements + 1)
-        self.points = torch.tensor(pts, device=device).reshape(-1, dim)
-        self.weights = torch.tensor(wts, device=device).reshape(-1, 1)
+        dtype = torch.get_default_dtype()
+        self.points = torch.tensor(pts, dtype=dtype, device=device).reshape(-1, dim)
+        self.weights = torch.tensor(wts, dtype=dtype, device=device).reshape(-1, 1)
 
     def __len__(self) -> int:
         return self.points.shape[0]

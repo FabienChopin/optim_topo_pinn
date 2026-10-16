@@ -1,10 +1,10 @@
 # phasefield : optimisation topologique par champ de phase et PINN
 
-Problème (1D pour l'instant, Ω = [0, 1]) :
+Problème, sur Ω = [0, 1]^d avec d = 1 ou 2 :
 
 ```
-min_{u, ρ}  J = ∫_{0.2}^{0.3} u² dx
-s.c.        -(A(ρ) u')' = 1 sur Ω,  u(0) = u(1) = 0
+min_{u, ρ}  J = ∫_bande u² dx,  bande = [0.2, 0.3] × [0, 1]^(d-1)
+s.c.        -div(A(ρ) ∇u) = 1 sur Ω,  u = 0 sur ∂Ω
             A(ρ) = A2 + (A1 - A2) ρ / (1 + q (1 - ρ)),  ρ ∈ [0, 1] (champ de phase, loi RAMP)
 ```
 
@@ -27,6 +27,19 @@ En 1D, la solution exacte est connue pour tout ρ (A u' = C - x). Elle sert à t
 - calculer J_ref ;
 - vérifier u et le vrai J du design courant pendant l'entraînement ;
 - calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (q = `q_max`). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
+
+## 2D
+
+```bash
+python run.py --config configs/2d.toml
+```
+
+La physique, le réseau et la loss sont les mêmes qu'en 1D. Ce qui change :
+- **Référence** : il n'y a plus de solution exacte. u et le vrai J du design courant sont vérifiés par un solveur volumes finis sur `output.n_grid`² cellules (`fv2d.py`). Les faces utilisent la moyenne harmonique de A et le bord est à une demi-maille du centre. J'ai vérifié la convergence à l'ordre 2 sur le cas homogène et le gradient adjoint par différences finies. J_ref vient du même solveur.
+- **Optimums de référence** : on ne peut plus les calculer exactement. Ils sont remplacés par une optimisation topologique classique par densité (filtre, RAMP avec continuation en q, gradient adjoint, section `[reference]`). La « référence binaire » est le meilleur design seuillé au volume V0. Elle est de bonne qualité, mais rien ne garantit que ce soit l'optimum.
+- **Figure** : elle montre les cartes de ρ (contour de la référence binaire en orange), de la référence, de u, et de l'écart entre u PINN et u volumes finis.
+- **Gris** : le plancher de gris devient 4ε × longueur d'interface.
+- **Coût** : il faut n² points de quadrature (300² = 90 000 par défaut), donc un GPU. `run.dtype = "float32"` est environ 5 fois plus rapide sur un GPU grand public (RTX). Garde `float64` sur un GPU de calcul (A100, H100).
 
 ## Installation
 
@@ -93,12 +106,14 @@ Ctrl-C arrête proprement : l'état courant est sauvegardé.
 ## Organisation
 
 ```
-configs/default.toml        paramètres
+configs/default.toml        paramètres (1D)
+configs/2d.toml             paramètres (2D)
 src/phasefield/
   config.py                 lecture TOML + surcharges
   problem.py                problème 1D : A(ρ), source, bord, objectif, solution exacte
-  exact1d.py                solution exacte pour A constant par morceaux
-  references.py             optimum binaire et optimum relaxé
+  exact1d.py                solution exacte 1D pour A constant par morceaux
+  fv2d.py                   volumes finis 2D (solution de référence, gradient adjoint)
+  references.py             références : optimums exacts (1D), optimisation par densité (2D)
   quadrature.py             Gauss composite sur [lo, hi]^d
   operators.py              gradient et divergence par autograd (dimension d)
   models.py                 MLP, u à bord fort, ρ = sigmoïde
@@ -109,7 +124,7 @@ src/phasefield/
   run.py                    point d'entrée, dossier du run
 ```
 
-Pour un autre objectif ou un autre problème (2D, 3D), il faut écrire une nouvelle classe à côté de `BandProblem1D`, avec les mêmes méthodes. Quadrature, opérateurs, réseaux et loss sont écrits en dimension d. Les diagnostics et les références exactes ne valent que pour le 1D.
+La physique (loi A, source, bord, objectif) est dans `BandProblem`. `BandProblem1D` et `BandProblem2D` y ajoutent leur solution de référence. Quadrature, opérateurs, réseaux et loss sont écrits en dimension d. Pour la 3D, il faut un solveur de référence 3D, puis les diagnostics et les panneaux de figure correspondants.
 
 ## Développement
 
