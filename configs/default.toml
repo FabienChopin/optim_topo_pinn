@@ -1,0 +1,48 @@
+# Paramètres par défaut. Toute valeur se surcharge en ligne de commande :
+#   phasefield-run --config configs/default.toml --set run.seed=4 --set loss.lam=1e-3
+
+[run]
+name = "default"
+seed = 0
+device = "cpu"
+
+[problem]
+# -(A(rho) u')' = source sur [0, 1], u = 0 au bord ; A = a1 rho + a2 (1 - rho)
+a1 = 1.0
+a2 = 0.01
+v0 = 0.5              # volume cible de la phase rho = 1
+source = 1.0
+band = [0.2, 0.3]     # objectif J = int_band u^2
+
+[quadrature]
+# Gauss composite : n_elements x n_gauss points (bornes de la bande alignées sur les éléments)
+n_elements = 100
+n_gauss = 10
+
+[model]
+width = 20
+depth = 3             # couches cachées (tanh)
+
+[loss]
+# L = J / J_ref + beta * residu + lam * Van der Waals + mu * (int rho - v0)^2
+lam = 1e-2
+beta = 1e2
+mu = 1e2
+
+[continuation]
+# eps géométrique de eps0 à eps_min en n_stages paliers
+eps0 = 0.1
+eps_min = 4e-3
+n_stages = 10
+
+[train]
+adam_iters = 2000     # premier palier seulement
+adam_lr = 1e-3
+lbfgs_iters = 1000    # à chaque palier
+lbfgs_history = 50
+
+[output]
+runs_dir = "runs"
+plot_every = 100      # évaluations entre deux mises à jour de live.png
+log_every = 100       # évaluations entre deux lignes de journal
+n_exact = 4000        # cellules de la solution exacte (diagnostics)
