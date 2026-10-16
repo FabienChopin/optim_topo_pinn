@@ -75,6 +75,22 @@ rho = sigmoïde, A linéaire en rho, épaisseur w (rho 99 % -> 1 %).
   (1e-5, identique à la marche à 3 chiffres près ; tous les cas aussi).
 - Quadrature fixe + L-BFGS : correct à w = 0.1 (2.4e-5, interface résolue par les points),
   diverge dès w = 1e-2. Les falaises apparaissent là où le réseau peine à faire le coude.
+- w = 1e-4, quadrature fixe dense (GPU, MLP 32 x 3) : L-BFGS ne diverge plus.
+
+  | Quadrature | points dans l'interface | L2 / u_w | énergie rel | temps |
+  |---|---|---|---|---|
+  | Gauss 2001x6 fixe, Adam 3000 + L-BFGS | 0 | 2.6e-4 | 2.3e-2 | 93 s |
+  | Gauss 10001x6 fixe, Adam 3000 + L-BFGS | 6 | 4.3e-4 | 1.6e-2 | 174 s |
+  | Gauss 30001x6 fixe, Adam 3000 + L-BFGS | 18 | 4.9e-4 | 1.5e-2 | 407 s |
+  | Gauss 10001x6 fixe, Adam 10000 | 6 | 2.9e-3 | 4.9e-2 | 184 s |
+  | Gauss 199x6 décalé, Adam 10000 | 0 | 5.7e-3 | 6.8e-2 | 55 s |
+
+  Ce qui compte : des points assez serrés pour que le réseau ne puisse plus dessiner de
+  falaise entre eux (seuil entre 1 200 et 12 000 points pour 32 x 3, à revoir si le réseau
+  grossit), pas la résolution de l'interface. Avec 2001x6, E_h < E* (-9e-6) : la triche
+  commence mais reste négligeable. Test de contrôle : comparer E_h à l'énergie sur une
+  quadrature décalée ; un écart net signale des falaises. Ne passe pas en 2D : 12 000 points
+  par direction = 1.4e8 points (le 2D actuel : 90 000).
 
 ## 1D band : pourquoi SIMP reste gris (`band_1d_binaire.py`, numpy + scipy, ~1 min)
 En 1D, u ne dépend que de 1/A, et un mélange fin des deux matériaux a pour conductivité la
