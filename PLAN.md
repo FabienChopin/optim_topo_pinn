@@ -41,6 +41,28 @@ longueur au moment de la montée en P fixe la topologie.
 - P_AFTER_EPS (QUICK, SEED = 3) : dégradé lisse sans paroi ; J/J_ref 0.53 à P = 1 (SIMP 0.31)
   puis 1.17 à P = 3. Le PINN optimise mal dès le problème relaxé.
 
+## Deep Ritz 1D, interface nette fixée en 0.5 (`ritz_1d_interface.py`, CPU, ~4 min)
+-(A u')' = 1, A = 1 | 0.01, design fixé. Forme faible = min E(u) = int (A u'^2 / 2 - u),
+un seul réseau (32 x 3), quadrature uniforme qui ignore l'interface. Erreurs sur grille fine.
+
+| Cas | L2 rel u | énergie rel | flux loin de X_I |
+|---|---|---|---|
+| Gauss 49x6 fixe, Adam 3000 + L-BFGS | 3.4 (diverge) | 470 | 0.28 |
+| Gauss 49x6 fixe, Adam 10000 | 2.8 (diverge) | 27 | 0.25 |
+| Gauss 199x6 fixe, Adam 10000 | 3.5e-4 | 0.077 | 3e-3 |
+| Gauss 199x6 fixe, Adam 3000 + L-BFGS | 2.9 (diverge) | 120 | 0.28 |
+| Gauss 49x6 décalé au hasard, Adam 10000 | 7.5e-3 | 0.082 | 0.025 |
+| Gauss 199x6 décalé au hasard, Adam 10000 | 5.0e-3 | 0.066 | 0.024 |
+| Monte-Carlo 300, Adam 10000 | 2.1e-2 | 0.14 | 0.082 |
+
+- Sur quadrature fixe, l'énergie discrète n'est pas bornée inférieurement : u monte par
+  marches entre les points de Gauss côté isolant (pentes ×100 moins chères). E discrète
+  -196 pour E vraie +1e4, écart de 173 sur u aux points mêmes. L-BFGS la trouve toujours.
+- Points retirés à chaque itération (Gauss décalé) : stable, u à 0.5 % près.
+- L'erreur d'énergie (~7 %) est à 99 % dans ±0.05 autour de l'interface : le réseau tanh
+  lisse le coude de u (u' saute d'un facteur 100). Loin de l'interface, le flux est bon.
+- Conséquence pour l'optimisation : pas de L-BFGS sur quadrature fixe avec Ritz.
+
 ## 1D band : pourquoi SIMP reste gris (`band_1d_binaire.py`, numpy + scipy, ~1 min)
 En 1D, u ne dépend que de 1/A, et un mélange fin des deux matériaux a pour conductivité la
 moyenne harmonique (couches en série) : 1/A_mix = rho/A1 + (1 - rho)/A2. SIMP P = 3 donne au
