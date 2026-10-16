@@ -1,0 +1,15 @@
+# Environnement d'entraînement (Python >= 3.10).
+#
+#   avec uv  : uv venv .venv && uv pip install -r requirements.txt
+#   sans uv  : python -m venv .venv
+#              . .venv/bin/activate          (Windows : .venv\Scripts\activate)
+#              pip install -r requirements.txt
+#
+# Le wheel torch de PyPI sous Linux embarque CUDA 12.x (GPU NVIDIA, driver récent).
+# Sous Windows, ou pour forcer une variante, installer torch d'abord depuis l'index PyTorch :
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu     (CPU seul)
+#   pip install torch --index-url https://download.pytorch.org/whl/cu126   (CUDA 12.6)
+torch>=2.2
+numpy>=1.26
+scipy>=1.11
+matplotlib>=3.8
