@@ -62,6 +62,19 @@ un seul réseau (32 x 3), quadrature uniforme qui ignore l'interface. Erreurs su
 - L'erreur d'énergie (~7 %) est à 99 % dans ±0.05 autour de l'interface : le réseau tanh
   lisse le coude de u (u' saute d'un facteur 100). Loin de l'interface, le flux est bon.
 - Conséquence pour l'optimisation : pas de L-BFGS sur quadrature fixe avec Ritz.
+- Pourquoi : l'énergie discrète ne voit u' qu'aux points ; toute fonction plate sur les points
+  annule la partie quadratique, et -sum w u(x_k) n'est pas bornée (plateau de hauteur H :
+  E_h = -H, E vraie ~ 900 H^2). Le Gauss décalé uniformément d'une fraction d'élément, modulo 1,
+  est sans biais : E_s[E_{h,s}(u)] = E(u) pour tout u, donc Adam descend l'énergie vraie.
+
+### Interface lissée (`python ritz_1d_interface.py epaisseur`)
+rho = sigmoïde, A linéaire en rho, épaisseur w (rho 99 % -> 1 %).
+- Solution exacte u_w -> u_0 (marche) : L2 et max en O(w) (2.9e-5 pour w = 1e-5), énergie en
+  O(sqrt(w)) (4.4e-3 pour w = 1e-5).
+- Ritz, erreur L2 par rapport à u_w : 1.6e-4 (w = 0.1), 2.2e-4 (1e-2), 2.1e-3 (1e-3), 5.0e-3
+  (1e-5, identique à la marche à 3 chiffres près ; tous les cas aussi).
+- Quadrature fixe + L-BFGS : correct à w = 0.1 (2.4e-5, interface résolue par les points),
+  diverge dès w = 1e-2. Les falaises apparaissent là où le réseau peine à faire le coude.
 
 ## 1D band : pourquoi SIMP reste gris (`band_1d_binaire.py`, numpy + scipy, ~1 min)
 En 1D, u ne dépend que de 1/A, et un mélange fin des deux matériaux a pour conductivité la
