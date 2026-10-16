@@ -24,6 +24,7 @@ from .references import binary_optimum, relaxed_optimum
 from .train import Trainer
 
 log = logging.getLogger("phasefield")
+DEFAULT_CONFIG = Path(__file__).resolve().parents[2] / "configs" / "default.toml"
 
 
 def make_run_dir(runs_dir: str, name: str, seed: int) -> Path:
@@ -54,7 +55,7 @@ def seed_everything(seed: int):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", default="configs/default.toml", help="fichier TOML")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG), help="fichier TOML (défaut : %(default)s)")
     parser.add_argument("--set", action="append", default=[], metavar="SECTION.CLE=VALEUR",
                         help="surcharge d'un paramètre (répétable)")
     args = parser.parse_args(argv)

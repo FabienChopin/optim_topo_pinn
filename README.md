@@ -36,6 +36,16 @@ uv venv .venv && uv pip install -e ".[dev]"
 python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
 ```
 
+**Sans installation** (supercalculateur, pas de pip) : il suffit d'avoir Python ≥ 3.11, torch, numpy, scipy et
+matplotlib, puis de remplacer `phasefield-run` par `python run.py` (à la racine du dépôt) dans les commandes
+ci-dessous. Le script ajoute `src/` au chemin de Python. Les runs vont dans `runs/` sous le dossier courant.
+
+```bash
+git clone -b phase-field-1d https://github.com/FabienChopin/optim_topo_pinn.git
+cd optim_topo_pinn
+python run.py --set run.seed=4
+```
+
 torch est pris sur PyPI. Pour une variante CPU seule ou une version précise de CUDA, installe torch d'abord :
 `pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 
