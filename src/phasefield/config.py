@@ -88,7 +88,7 @@ class ReferenceConfig:
     filter_radius: float = 0.03
     q_penal: float = 300.0
     n_q_steps: int = 6
-    iters_per_step: int = 100
+    iters_per_step: int = 300
 
 
 @dataclass

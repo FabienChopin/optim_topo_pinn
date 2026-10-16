@@ -35,7 +35,7 @@ python run.py --config configs/2d.toml
 ```
 
 La physique, le réseau et la loss sont les mêmes qu'en 1D. Ce qui change :
-- **Référence** : il n'y a plus de solution exacte. u et le vrai J du design courant sont vérifiés par un solveur volumes finis sur `output.n_grid`² cellules (`fv2d.py`). Les faces utilisent la moyenne harmonique de A et le bord est à une demi-maille du centre. J'ai vérifié la convergence à l'ordre 2 sur le cas homogène et le gradient adjoint par différences finies. J_ref vient du même solveur.
+- **Référence** : il n'y a plus de solution exacte. u et le vrai J du design courant sont vérifiés par un solveur volumes finis sur `output.n_grid`² cellules (`fv2d.py`). Les faces utilisent la moyenne harmonique de A et le bord est à une demi-maille du centre. Convergence à l'ordre 2 vérifiée sur le cas homogène, gradient adjoint vérifié par différences finies. J_ref vient du même solveur.
 - **Optimums de référence** : on ne peut plus les calculer exactement. Ils sont remplacés par une optimisation topologique classique par densité (filtre, RAMP avec continuation en q, gradient adjoint, section `[reference]`). La « référence binaire » est le meilleur design seuillé au volume V0. Elle est de bonne qualité, mais rien ne garantit que ce soit l'optimum.
 - **Figure** : elle montre les cartes de ρ (contour de la référence binaire en orange), de la référence, de u, et de l'écart entre u PINN et u volumes finis.
 - **Gris** : le plancher de gris devient 4ε × longueur d'interface.

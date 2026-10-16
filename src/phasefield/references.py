@@ -8,7 +8,8 @@
   que tout design 0/1 avec cette loi.
 
 2D (volumes finis, pas d'optimum garanti) : optimisation par densité classique, filtre de
-densité + RAMP avec continuation de q + gradient adjoint + gradient projeté sur le volume.
+densité + RAMP avec continuation de q + gradient adjoint + L-BFGS-B (bornes) avec lagrangien
+augmenté pour le volume.
 - binaire : continuation jusqu'à q_penal (le gris est pénalisé), puis seuillage au volume V0 ;
   on garde le meilleur des designs seuillés.
 - relaxé : continuation jusqu'à q_max (la loi finale du PINN), gris permis.
@@ -152,26 +153,36 @@ def _project_volume_np(target: np.ndarray, v0: float) -> np.ndarray:
 
 
 def density_optimization_2d(problem: BandProblem2D, rcfg: ReferenceConfig, q_final: float) -> np.ndarray:
-    """Densité filtrée (n_cells x n_cells) après continuation de q de 0 à q_final."""
+    """Densité filtrée (n_cells x n_cells) après continuation de q de 0 à q_final.
+
+    À q fixé : L-BFGS-B sur rho in [0, 1]^N, volume par lagrangien augmenté
+    (J / J_ref + m (V - v0) + c/2 (V - v0)^2, multiplicateur m mis à jour n_outer fois).
+    """
     n = rcfg.n_cells
     filt = _density_filter(n, rcfg.filter_radius)
     rho = np.full(n * n, problem.v0)
+    multiplier, penalty, n_outer = 0.0, 100.0, 4
     q_saved = problem.q
+
+    def fun(r):
+        rho_f = (filt @ r).reshape(n, n)
+        sol = problem.solve(rho_f)
+        dv = r.mean() - problem.v0
+        value = sol.integral_u2(*problem.band) / problem.j_ref + multiplier * dv + 0.5 * penalty * dv ** 2
+        grad = filt.T @ (sol.gradient_a(*problem.band) * problem.dconductivity(rho_f)).ravel() / problem.j_ref
+        return value, grad + (multiplier + penalty * dv) / r.size
+
     try:
-        for q in (np.linspace(0.0, q_final, rcfg.n_q_steps) if q_final > 0 else [0.0]):
+        for q in np.linspace(0.0, q_final, rcfg.n_q_steps):   # q_final = 0 : n_q_steps paliers à q = 0
             problem.q = q
-            move, j_old = 0.05, np.inf
-            for _ in range(rcfg.iters_per_step):
-                rho_f = (filt @ rho).reshape(n, n)
-                sol = problem.solve(rho_f)
-                j = sol.integral_u2(*problem.band)
-                g = filt.T @ (sol.gradient_a(*problem.band) * problem.dconductivity(rho_f)).ravel()
-                move = min(0.2, move * 1.05) if j < j_old else move * 0.5
-                j_old = j
-                rho = _project_volume_np(rho - move * g / np.abs(g).max(), problem.v0)
+            for _ in range(n_outer):
+                res = minimize(fun, rho, jac=True, method="L-BFGS-B", bounds=[(0.0, 1.0)] * rho.size,
+                               options={"maxiter": max(1, rcfg.iters_per_step // n_outer)})
+                rho = res.x
+                multiplier += penalty * (rho.mean() - problem.v0)
     finally:
         problem.q = q_saved
-    return (filt @ rho).reshape(n, n)
+    return (filt @ _project_volume_np(rho, problem.v0)).reshape(n, n)
 
 
 def _to_grid(rho: np.ndarray, n_grid: int) -> np.ndarray:

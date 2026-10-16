@@ -59,9 +59,9 @@ n_grid = 200          # 2D : cellules par direction du solveur volumes finis (di
 [reference]
 # 2D seulement : optimisation par densité sur la grille volumes finis (n_cells x n_cells),
 # filtre de densité de rayon filter_radius, RAMP avec continuation de q jusqu'à q_penal
-# (n_q_steps paliers de iters_per_step itérations), puis seuillage au volume V0.
+# (n_q_steps paliers de iters_per_step itérations L-BFGS-B), puis seuillage au volume V0.
 n_cells = 100
 filter_radius = 0.03
 q_penal = 300.0
 n_q_steps = 6
-iters_per_step = 100
+iters_per_step = 300
