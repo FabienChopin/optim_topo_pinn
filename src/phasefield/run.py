@@ -80,12 +80,13 @@ def main(argv=None):
     t = time.time()
     refs = {"band": problem.band, "v0": problem.v0,
             "binary": binary_optimum(problem, seed=cfg.run.seed),
-            "relaxed": relaxed_optimum(problem)}
+            "relaxed": None}
+    refs["relaxed"] = relaxed_optimum(problem, q=cfg.continuation.q_max, binary=refs["binary"])
     b, r = refs["binary"], refs["relaxed"]
     log.info(f"optimum binaire : J/J_ref = {b['J']:.4f}, {b['n_interfaces']} interfaces en "
              f"{np.round(b['edges'][1:-1], 4).tolist()}, ρ = {b['rho'].astype(int).tolist()}")
-    log.info(f"optimum relaxé (gris permis) : J/J_ref = {r['J']:.4f}, gris {r['grey']:.3f}   "
-             f"({time.time() - t:.1f} s)")
+    log.info(f"optimum relaxé (gris permis, q = {cfg.continuation.q_max:g}) : J/J_ref = {r['J']:.4f}, "
+             f"gris {r['grey']:.3f}   ({time.time() - t:.1f} s)")
 
     def mlp():
         return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi)
@@ -107,7 +108,7 @@ def main(argv=None):
     metrics = {
         "status": status, "time_s": time.time() - trainer.t0, "j_ref": problem.j_ref,
         "binary_optimum": {"J": b["J"], "interfaces": b["edges"][1:-1].tolist(), "rho": b["rho"].tolist()},
-        "relaxed_optimum": {"J": r["J"], "grey": r["grey"]},
+        "relaxed_optimum": {"J": r["J"], "grey": r["grey"], "q": cfg.continuation.q_max},
         "stages": trainer.stages,
         "final": trainer.stages[-1] if trainer.stages else None,
     }

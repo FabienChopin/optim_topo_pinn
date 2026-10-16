@@ -25,6 +25,7 @@ class Trainer:
         self.checks = []     # diagnostics exacts aux mises à jour de la figure
         self.stages = []     # bilan de fin de palier
         self.stage, self.eps = 0, cfg.continuation.eps0
+        problem.q = cfg.continuation.q(0)
         self.t0 = time.time()
 
     # --- une évaluation de la loss : enregistrement, journal, figure ---
@@ -54,9 +55,12 @@ class Trainer:
         h = self.history
         c = self.cfg
         title = (f"{c.run.name}   seed {c.run.seed}   palier {self.stage + 1}/{c.continuation.n_stages}   "
-                 f"ε = {self.eps:.2e}   éval {len(h['total'])}   {time.time() - self.t0:.0f} s")
+                 f"ε = {self.eps:.2e}   q = {self.problem.q:g}   éval {len(h['total'])}   "
+                 f"{time.time() - self.t0:.0f} s")
         summary = "\n".join([
-            f"A = {c.problem.a1:g} ρ + {c.problem.a2:g} (1 - ρ)   V0 = {c.problem.v0:g}",
+            f"A = {c.problem.a2:g} + {c.problem.a1 - c.problem.a2:g} ρ / (1 + q (1 - ρ))   V0 = {c.problem.v0:g}",
+            f"q (RAMP) : {c.continuation.q0:g} -> {c.continuation.q_max:g} "
+            f"(monte après le palier {c.continuation.q_start + 1})",
             f"λ = {c.loss.lam:g}   β = {c.loss.beta:g}   μ = {c.loss.mu:g}",
             f"ε : {c.continuation.eps0:g} -> {c.continuation.eps_min:g} ({c.continuation.n_stages} paliers)",
             f"points : {len(self.quad)} ({c.quadrature.n_elements} x {c.quadrature.n_gauss} Gauss)",
@@ -82,8 +86,10 @@ class Trainer:
         c = self.cfg
         for stage in range(c.continuation.n_stages):
             self.stage, self.eps = stage, c.continuation.eps(stage)
+            self.problem.q = c.continuation.q(stage)
             self.history["stage_starts"].append(len(self.history["total"]))
-            log.info(f"===== palier {stage + 1}/{c.continuation.n_stages}   ε = {self.eps:.3e} =====")
+            log.info(f"===== palier {stage + 1}/{c.continuation.n_stages}   ε = {self.eps:.3e}   "
+                     f"q = {self.problem.q:g} =====")
             t_stage = time.time()
             if stage == 0 and c.train.adam_iters > 0:
                 opt = torch.optim.Adam(self.params, lr=c.train.adam_lr)
@@ -105,7 +111,7 @@ class Trainer:
             lbfgs.step(closure)
             snap = self.plot()
             h = self.history
-            summary = {"stage": stage, "eps": self.eps, "evals": len(h["total"]),
+            summary = {"stage": stage, "eps": self.eps, "q": self.problem.q, "evals": len(h["total"]),
                        "time_s": time.time() - t_stage,
                        **{k: h[k][-1] for k in ("total", *TERMS, "vol", "grey")},
                        **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "n_interfaces",

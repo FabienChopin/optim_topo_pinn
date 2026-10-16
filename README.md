@@ -5,7 +5,7 @@ Problème (1D pour l'instant, Ω = [0, 1]) :
 ```
 min_{u, ρ}  J = ∫_{0.2}^{0.3} u² dx
 s.c.        -(A(ρ) u')' = 1 sur Ω,  u(0) = u(1) = 0
-            A(ρ) = A1 ρ + A2 (1 - ρ),  ρ ∈ [0, 1] (champ de phase)
+            A(ρ) = A2 + (A1 - A2) ρ / (1 + q (1 - ρ)),  ρ ∈ [0, 1] (champ de phase, loi RAMP)
 ```
 
 Les deux inconnues sont des réseaux : u est un PINN avec conditions au bord fortes,
@@ -21,11 +21,12 @@ L = J / J_ref
 - J_ref est le J exact du matériau homogène ρ = V0.
 - Les intégrales utilisent une quadrature de Gauss composite (1000 points par défaut). Les bornes de la bande sont alignées sur des bords d'éléments.
 - ε décroît par paliers géométriques : Adam au premier palier, puis L-BFGS à chaque palier.
+- Loi RAMP : q = 0 donne la loi linéaire (valeur par défaut). q = A1/A2 - 1 (= 99) donne la loi harmonique, c'est-à-dire des couches en série, le mélange exact en 1D. Au-delà, le gris est pénalisé. q peut monter par paliers : `continuation.q0`, `q_max`, `q_start`. Par exemple, `--set continuation.q_max=99 --set continuation.q_start=4` garde la loi linéaire pendant les 5 premiers paliers, puis monte q jusqu'à 99. J_ref reste calculé en loi linéaire (q = 0), pour que J/J_ref soit comparable d'un run à l'autre.
 
 En 1D, la solution exacte est connue pour tout ρ (A u' = C - x). Elle sert à trois choses :
 - calculer J_ref ;
 - vérifier u et le vrai J du design courant pendant l'entraînement ;
-- calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris. S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
+- calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (q = `q_max`). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
 
 ## Installation
 

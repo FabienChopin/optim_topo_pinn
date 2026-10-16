@@ -7,7 +7,8 @@ seed = 0
 device = "cpu"
 
 [problem]
-# -(A(rho) u')' = source sur [0, 1], u = 0 au bord ; A = a1 rho + a2 (1 - rho)
+# -(A(rho) u')' = source sur [0, 1], u = 0 au bord
+# A = a2 + (a1 - a2) rho / (1 + q (1 - rho))   (RAMP ; q par palier, voir [continuation])
 a1 = 1.0
 a2 = 0.01
 v0 = 0.5              # volume cible de la phase rho = 1
@@ -34,6 +35,11 @@ mu = 1e2
 eps0 = 0.1
 eps_min = 4e-3
 n_stages = 10
+# q de RAMP : q0 jusqu'au palier q_start (compté depuis 0), puis linéaire jusqu'à q_max au dernier palier.
+# q = 0 : loi linéaire ; q = a1/a2 - 1 = 99 : loi harmonique (mélange exact en série) ; au-delà : gris pénalisé.
+q0 = 0.0
+q_max = 0.0
+q_start = 0
 
 [train]
 adam_iters = 2000     # premier palier seulement

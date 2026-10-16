@@ -1,5 +1,9 @@
 """Problème 1D : -(A(rho) u')' = f sur [0, 1], u = 0 au bord, objectif J = int_band u^2.
 
+Loi matériau RAMP : A = a2 + (a1 - a2) rho / (1 + q (1 - rho)).
+q = 0 : loi linéaire ; q = a1/a2 - 1 : loi harmonique (couches en série, mélange exact en 1D) ;
+au-delà, le gris est pénalisé. q est modifié par palier par l'entraînement (self.q).
+
 Ce qui dépend du problème (domaine, A, source, bord, objectif, solution exacte) est ici ;
 un problème 2D ou 3D fournira les mêmes méthodes.
 """
@@ -18,11 +22,12 @@ class BandProblem1D:
     def __init__(self, cfg: ProblemConfig):
         self.a1, self.a2, self.v0, self.f = cfg.a1, cfg.a2, cfg.v0, cfg.source
         self.band = tuple(cfg.band)
+        self.q = 0.0                                                       # J_ref en loi linéaire, fixe
         self.j_ref = float(self.exact_objective([0.0, 1.0], [self.v0]))   # rho = v0 partout
 
     # --- termes de l'EDP et de l'objectif, aux points de quadrature (N, d) ---
     def conductivity(self, rho):
-        return self.a1 * rho + self.a2 * (1.0 - rho)
+        return self.a2 + (self.a1 - self.a2) * rho / (1.0 + self.q * (1.0 - rho))
 
     def source(self, x: torch.Tensor) -> torch.Tensor:
         return torch.full_like(x[:, :1], self.f)

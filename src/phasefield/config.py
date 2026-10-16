@@ -45,6 +45,16 @@ class ContinuationConfig:
     eps0: float = 0.1
     eps_min: float = 4e-3
     n_stages: int = 10
+    q0: float = 0.0
+    q_max: float = 0.0
+    q_start: int = 0
+
+    def q(self, stage: int) -> float:
+        """q de RAMP : q0 jusqu'au palier q_start inclus, puis linéaire jusqu'à q_max au dernier palier."""
+        last = self.n_stages - 1
+        if stage <= self.q_start or last <= self.q_start:
+            return self.q0
+        return self.q0 + (self.q_max - self.q0) * (stage - self.q_start) / (last - self.q_start)
 
     def eps(self, stage: int) -> float:
         if self.n_stages == 1:
