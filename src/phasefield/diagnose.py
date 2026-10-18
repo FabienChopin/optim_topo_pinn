@@ -35,11 +35,12 @@ from .losses import compute_losses
 from .models import MLP, DensityNet, StateNet
 from .problem import make_problem
 from .quadrature import Quadrature
+from .references import binary_optimum, laminate_optimum
 
 WIDTH_FACTOR = 2.0 * math.log(9.0)   # largeur 10-90 % de sigmoïde(x / ε), en unités de ε
 FINE_GRID = {1: 20000, 2: 600}       # grille de ρ (netteté, gris, détails)
 FIT_GRID = {1: 4000, 2: 300}         # grille du test de capacité
-FIT_ITERS = 500
+FIT_ITERS = 2000
 FINE_QUAD = {1: 4, 2: 2}             # facteur sur n_elements pour la quadrature fine
 
 # seuils des verdicts
@@ -130,12 +131,10 @@ def signed_distance(binary: np.ndarray) -> np.ndarray:
     return np.where(inside, d_in, -d_out) / n
 
 
-def fitted_sharpness(problem, rho_net, eps: float) -> float:
-    """Netteté atteinte par une copie du réseau ρ recalée sur sigmoïde(d / ε) (contour courant)."""
+def fit_profile(problem, rho_net, eps: float, binary: np.ndarray) -> np.ndarray:
+    """ρ (grille FIT_GRID) d'une copie du réseau ρ recalée sur sigmoïde(d / ε), d distance signée au
+    contour de binary (même grille)."""
     n = FIT_GRID[problem.dim]
-    binary = (_rho_grid(problem, rho_net, n) > 0.5).astype(float)
-    if binary.min() == binary.max():
-        return math.nan
     net = copy.deepcopy(rho_net)
     device = next(net.parameters()).device
     dtype = torch.get_default_dtype()
@@ -151,7 +150,25 @@ def fitted_sharpness(problem, rho_net, eps: float) -> float:
         return loss
 
     opt.step(closure)
-    return sharpness(_rho_grid(problem, net, n), eps)
+    return _rho_grid(problem, net, n)
+
+
+def fitted_sharpness(problem, rho_net, eps: float) -> float:
+    """Netteté atteinte par le réseau recalé sur le profil optimal du contour courant."""
+    binary = (_rho_grid(problem, rho_net, FIT_GRID[problem.dim]) > 0.5).astype(float)
+    if binary.min() == binary.max():
+        return math.nan
+    return sharpness(fit_profile(problem, rho_net, eps, binary), eps)
+
+
+def reference_capacity(problem, rho_net, eps: float, ref: dict) -> dict:
+    """1D : le réseau, recalé sur le profil optimal du design binaire de référence, en reproduit-il les
+    interfaces ? (le contour courant peut être bien plus simple que la référence)"""
+    edges, mid = problem.cells(FIT_GRID[1])
+    binary = ref["rho"][np.clip(np.searchsorted(ref["edges"], mid, side="right") - 1, 0, len(ref["rho"]) - 1)]
+    fit = fit_profile(problem, rho_net, eps, binary)
+    return {"ref_interfaces": interface_measure(binary), "ref_interfaces_fit": interface_measure(fit > 0.5),
+            "ref_sharpness_fit": sharpness(fit, eps)}
 
 
 def rho_measures(problem, rho_net, eps: float) -> dict:
@@ -187,7 +204,9 @@ def verdict(d: dict) -> list[str]:
         and d["vdw_gap"] <= MAX_GAP and d["J_gap"] <= MAX_GAP
     if not points_ok:
         limits.append("points")
-    if d["sharpness_fit"] > MAX_SHARPNESS:
+    ref_missed = "ref_interfaces" in d and (d["ref_interfaces_fit"] != d["ref_interfaces"]
+                                            or d["ref_sharpness_fit"] > MAX_SHARPNESS)
+    if d["sharpness_fit"] > MAX_SHARPNESS or ref_missed:
         limits.append("réseau ρ")
     elif d["grey_excess"] > MAX_GREY:
         # q < a1/a2 - 1 : le gris est plus conducteur qu'un mélange réel, l'optimum le veut ;
@@ -202,7 +221,8 @@ def verdict(d: dict) -> list[str]:
     return limits
 
 
-def diagnose_stage(cfg, problem, quad, fine_quad, u_net, rho_net, checkpoint: Path, stages: list) -> dict:
+def diagnose_stage(cfg, problem, quad, fine_quad, u_net, rho_net, checkpoint: Path, stages: list,
+                   ref: dict | None) -> dict:
     stage = int(checkpoint.stem.split("_")[1])
     state = torch.load(checkpoint, map_location="cpu")
     u_net.load_state_dict(state["u"])
@@ -225,6 +245,8 @@ def diagnose_stage(cfg, problem, quad, fine_quad, u_net, rho_net, checkpoint: Pa
         "lbfgs_capped": lbfgs_capped(cfg, stages, stage),
         "u_error": snap["u_error"], "J_exact": snap["J_exact"], "J_binary": snap["J_binary"],
     }
+    if ref is not None:
+        d.update(reference_capacity(problem, rho_net, eps, ref))
     d["limits"] = verdict(d)
     return d
 
@@ -235,11 +257,17 @@ def _row(d: dict) -> str:
     return (f"{d['stage'] + 1:6d}  {d['eps']:8.2e}  {d['q']:6g}  {d['sharpness']:5.2f}  {d['sharpness_fit']:5.2f}  "
             f"{d['points_per_interface']:6.1f}  {d['residual_ratio']:6.2f}  {d['vdw_gap']:6.1%}  {d['J_gap']:6.1%}  "
             f"{d['grey']:5.3f}  {d['grey_excess']:6.3f}  {feature:6.1f}  {capped:>6}  "
-            f"{d['u_error']:8.1e}  {', '.join(d['limits']) or '-'}")
+            f"{d['u_error']:8.1e}  {_ref_text(d):>9}  {', '.join(d['limits']) or '-'}")
+
+
+def _ref_text(d: dict) -> str:
+    if "ref_interfaces" not in d:
+        return "-"
+    return f"{d['ref_interfaces_fit']}/{d['ref_interfaces']} {d['ref_sharpness_fit']:.1f}"
 
 
 HEADER = ("palier         ε       q      r  r_fit  pts/if  rés f/e   ΔVdW      ΔJ   gris   excès  détail  "
-          "plafond  erreur u  limitant")
+          "plafond  erreur u   réf fit  limitant")
 LEGEND = f"""
 r        netteté : 1 / (4 ε |∇ρ|) sur ρ = 0.5 (1 = profil optimal sigmoïde(d / ε), > 1 : transition large)
 r_fit    netteté d'une copie du réseau ρ recalée sur sigmoïde(d / ε) (> {MAX_SHARPNESS} : le réseau limite)
@@ -249,7 +277,9 @@ rés f/e  résidu sur quadrature fine / d'entraînement (> {MAX_RESIDUAL_RATIO:g
 excès    gris - plancher 4 ε × interfaces (> {MAX_GREY:g}) : q < a1/a2 - 1, gris voulu par la loi (monter q) ;
          q ≥ a1/a2 - 1, gris pénalisé mais pas résorbé (gris résiduel : plus d'itérations, paliers plus longs)
 détail   plus petit détail en largeurs d'interface (< {MIN_FEATURE:g} : ε limite la finesse)
-plafond  L-BFGS arrêté au nombre max d'itérations"""
+plafond  L-BFGS arrêté au nombre max d'itérations
+réf fit  (1D) réseau recalé sur le profil optimal du design binaire de référence : interfaces
+         reproduites / interfaces de la référence, puis netteté (le réseau sait-il faire la cible ?)"""
 
 
 def main(argv=None):
@@ -278,6 +308,11 @@ def main(argv=None):
     u_net = StateNet(mlp(), problem.boundary_factor).to(args.device)
     rho_net = DensityNet(mlp(), problem.v0).to(args.device)
 
+    ref = None
+    if problem.dim == 1:   # référence binaire, recalculée (exacte, quelques secondes)
+        ref = (laminate_optimum(problem, cfg.loss.lam) if problem.objective_kind == "target"
+               else binary_optimum(problem, seed=cfg.run.seed))
+
     checkpoints = sorted((run_dir / "models").glob("stage_*.pt"))
     if args.stage:
         checkpoints = [c for c in checkpoints if int(c.stem.split("_")[1]) + 1 in args.stage]
@@ -285,7 +320,7 @@ def main(argv=None):
     print(HEADER)
     results = []
     for checkpoint in checkpoints:
-        d = diagnose_stage(cfg, problem, quad, fine_quad, u_net, rho_net, checkpoint, stages)
+        d = diagnose_stage(cfg, problem, quad, fine_quad, u_net, rho_net, checkpoint, stages, ref)
         results.append(d)
         print(_row(d), flush=True)
     print(LEGEND)

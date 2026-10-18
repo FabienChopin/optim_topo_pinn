@@ -21,6 +21,9 @@ class ProblemConfig:
     v0: float = 0.5
     source: float = 1.0
     band: list[float] = field(default_factory=lambda: [0.2, 0.3])
+    objective: str = "band"          # "band" : int_bande u^2 ; "target" : int (u - u*)^2 (1D)
+    target_amp: float = 0.35         # cible : rho* = v0 + target_amp sin(2 pi target_periods x)
+    target_periods: int = 1
 
 
 @dataclass

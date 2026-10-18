@@ -46,3 +46,13 @@ class PiecewiseSolution:
         mid, half = 0.5 * (left + right), 0.5 * (right - left)
         x = mid[:, None] + half[:, None] * _T3[None, :]
         return (half[:, None] * _W3[None, :] * self.u(x) ** 2).sum()
+
+
+def integral_sq_diff(a: PiecewiseSolution, b: PiecewiseSolution) -> torch.Tensor:
+    """int_0^1 (u_a - u_b)^2 dx, exacte : sur la réunion des deux grilles, l'écart est un polynôme
+    de degré 2 par morceau (Gauss à 3 points)."""
+    cuts = torch.unique(torch.cat([a.edges.detach(), b.edges.detach()]))
+    left, right = cuts[:-1], cuts[1:]
+    mid, half = 0.5 * (left + right), 0.5 * (right - left)
+    x = mid[:, None] + half[:, None] * _T3[None, :]
+    return (half[:, None] * _W3[None, :] * (a.u(x) - b.u(x)) ** 2).sum()

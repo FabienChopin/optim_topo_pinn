@@ -57,11 +57,15 @@ def _stage_marks(ax, stage_starts):
 
 # --- 1D ---
 def _rho_1d(a, snap, refs):
-    a.axvspan(*refs["band"], color="tab:red", alpha=0.08, label="bande de J")
-    a.stairs(refs["binary"]["rho"], refs["binary"]["edges"], baseline=None, color="k", lw=2,
-             label=f"optimum binaire (J/J_ref = {refs['binary']['J']:.4f})")
+    if refs["band"]:
+        a.axvspan(*refs["band"], color="tab:red", alpha=0.08, label="bande de J")
+    a.stairs(refs["binary"]["rho"], refs["binary"]["edges"], baseline=None, color="k",
+             lw=1.2 if "target" in refs else 2, label=f"référence binaire (J/J_ref = {refs['binary']['J']:.4g})")
     a.stairs(refs["relaxed"]["rho"], refs["relaxed"]["edges"], baseline=None, color="tab:green", lw=1, ls="--",
-             label=f"optimum relaxé, gris permis ({refs['relaxed']['J']:.4f})")
+             label=f"optimum relaxé, gris permis ({refs['relaxed']['J']:.4g})")
+    if "target" in refs:
+        a.stairs(refs["target"]["rho"], refs["target"]["edges"], baseline=None, color="tab:red", lw=1.2,
+                 label="ρ* cible (loi harmonique)")
     a.plot(snap["x"], snap["rho"], color="tab:blue", lw=1.8, label="ρ PINN")
     a.set_ylim(-0.05, 1.05)
     a.set_title("ρ(x)")
@@ -70,7 +74,10 @@ def _rho_1d(a, snap, refs):
 
 
 def _u_1d(a, snap, refs):
-    a.axvspan(*refs["band"], color="tab:red", alpha=0.08)
+    if refs["band"]:
+        a.axvspan(*refs["band"], color="tab:red", alpha=0.08)
+    if snap.get("u_target") is not None:
+        a.plot(snap["x"], snap["u_target"], color="tab:red", lw=1, label="u* cible")
     a.plot(snap["x"], snap["u_exact"], color="k", lw=2, label="u exacte (ρ du PINN)")
     a.plot(snap["x"], snap["u_pinn"], color="tab:orange", lw=1.5, ls="--", label="u PINN")
     a.set_title(f"u(x)   erreur L2 relative = {snap['u_error']:.2e}")
@@ -138,7 +145,8 @@ def _objective(a, history, checks, refs, evals):
         a.semilogy(ce, [c["J_binary"] for c in checks], "s", ms=3, color="tab:red",
                    label="J de référence du ρ seuillé à 0.5")
     a.axhline(refs["binary"]["J"], color="k", lw=1.5, label="référence binaire")
-    a.axhline(refs["relaxed"]["J"], color="tab:green", lw=1, ls="--", label="référence relaxée")
+    if refs["relaxed"]["J"] > 1e-12:   # cible : J relaxé ≈ 0, hors de l'axe logarithmique
+        a.axhline(refs["relaxed"]["J"], color="tab:green", lw=1, ls="--", label="référence relaxée")
     a.set_title("J / J_ref")
     a.legend(fontsize=8)
 

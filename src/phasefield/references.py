@@ -3,6 +3,10 @@
 1D (solution exacte) :
 - binaire : rho in {0, 1}, K interfaces dont on optimise les positions (SLSQP, volume exact,
   plusieurs départs) ; on garde le meilleur K. C'est la cible.
+- binaire, objectif « target » : laminé de N couches qui suit rho* (une couche de phase 1 par
+  cellule [k/N, (k+1)/N], d'épaisseur la masse de rho* dans la cellule, donc volume exact).
+  J(N) décroît avec N, le périmètre coûte λ/3 par interface (Van der Waals d'un profil
+  optimal) : on garde le N qui minimise J / J_ref + λ/3 × interfaces.
 - relaxé : rho in [0, 1] constant par cellule, gradient projeté sur {moyenne = v0}, pour la loi
   RAMP de paramètre q donné. Si son J est plus bas que le binaire, le gris est « moins cher »
   que tout design 0/1 avec cette loi.
@@ -65,6 +69,32 @@ def binary_optimum(problem: BandProblem1D, max_interfaces: int = 4, n_starts: in
                 if res.success and abs(volume(res.x)) < 1e-8 and (best is None or res.fun < best["J"]):
                     edges, rho = _simplify(*_binary_design(res.x, first))
                     best = {"J": float(res.fun), "edges": edges, "rho": rho, "n_interfaces": len(rho) - 1}
+    return best
+
+
+def laminate(problem: BandProblem1D, n_layers: int):
+    """Laminé de n_layers couches de phase 1 qui suit la densité cible rho*."""
+    mass = np.r_[0.0, np.cumsum(np.diff(problem.target_edges) * problem.target_rho)]   # int_0^x rho*
+    cell = np.linspace(0.0, 1.0, n_layers + 1)
+    width = np.diff(np.interp(cell, problem.target_edges, mass))
+    center = 0.5 * (cell[:-1] + cell[1:])
+    inner = np.column_stack([center - 0.5 * width, center + 0.5 * width]).ravel()
+    rho = np.r_[np.tile([0.0, 1.0], n_layers), 0.0]
+    return _simplify(np.r_[0.0, inner, 1.0], rho)
+
+
+def laminate_optimum(problem: BandProblem1D, lam: float, n_max: int = 200):
+    curve = []
+    best = None
+    for n in range(1, n_max + 1):
+        edges, rho = laminate(problem, n)
+        j = float(problem.exact_objective(edges, rho)) / problem.j_ref
+        n_interfaces = len(rho) - 1
+        cost = j + lam / 3.0 * n_interfaces
+        curve.append([n, j])
+        if best is None or cost < best["cost"]:
+            best = {"J": j, "cost": cost, "edges": edges, "rho": rho, "n_layers": n, "n_interfaces": n_interfaces}
+    best["curve"] = curve
     return best
 
 
@@ -225,12 +255,18 @@ def references_2d(problem: BandProblem2D, cfg: Config) -> dict:
 
 
 def references_1d(problem: BandProblem1D, cfg: Config) -> dict:
-    b = binary_optimum(problem, seed=cfg.run.seed)
+    if problem.objective_kind == "target":
+        b = laminate_optimum(problem, cfg.loss.lam)
+        b["label"] = (f"laminé optimal pour λ = {cfg.loss.lam:g} : {b['n_layers']} couches, {b['n_interfaces']} "
+                      f"interfaces, J/J_ref = {b['J']:.3e} (+ λ/3 × interfaces = {b['cost']:.3e})")
+        b["info"] = {k: b[k] for k in ("J", "cost", "n_layers", "n_interfaces", "curve")}
+    else:
+        b = binary_optimum(problem, seed=cfg.run.seed)
+        b["label"] = (f"optimum binaire : J/J_ref = {b['J']:.4f}, {b['n_interfaces']} interfaces en "
+                      f"{np.round(b['edges'][1:-1], 4).tolist()}, ρ = {b['rho'].astype(int).tolist()}")
+        b["info"] = {"J": b["J"], "interfaces": b["edges"][1:-1].tolist(), "rho": b["rho"].tolist()}
     r = relaxed_optimum(problem, q=cfg.continuation.q_final, binary=b)
-    b["label"] = (f"optimum binaire : J/J_ref = {b['J']:.4f}, {b['n_interfaces']} interfaces en "
-                  f"{np.round(b['edges'][1:-1], 4).tolist()}, ρ = {b['rho'].astype(int).tolist()}")
-    b["info"] = {"J": b["J"], "interfaces": b["edges"][1:-1].tolist(), "rho": b["rho"].tolist()}
-    r["label"] = (f"optimum relaxé (gris permis, q = {cfg.continuation.q_final:g}) : J/J_ref = {r['J']:.4f}, "
+    r["label"] = (f"optimum relaxé (gris permis, q = {cfg.continuation.q_final:g}) : J/J_ref = {r['J']:.4g}, "
                   f"gris {r['grey']:.3f}")
     r["info"] = {"J": r["J"], "grey": r["grey"], "q": cfg.continuation.q_final}
     return {"binary": b, "relaxed": r}
@@ -238,5 +274,7 @@ def references_1d(problem: BandProblem1D, cfg: Config) -> dict:
 
 def compute_references(problem: BandProblem, cfg: Config) -> dict:
     refs = references_1d(problem, cfg) if problem.dim == 1 else references_2d(problem, cfg)
-    refs.update(band=problem.band, v0=problem.v0)
+    refs.update(band=problem.band if problem.objective_kind == "band" else None, v0=problem.v0)
+    if problem.objective_kind == "target":
+        refs["target"] = {"edges": problem.target_edges, "rho": problem.target_rho}
     return refs

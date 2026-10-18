@@ -38,6 +38,26 @@ En 1D, la solution exacte est connue pour tout ρ (A u' = C - x). Elle sert à t
 - vérifier u et le vrai J du design courant pendant l'entraînement ;
 - calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (`q_max`, ou `q_values[-1]` en mode en phases). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
 
+## Test 1D de microstructure : laminage d'un matériau gris
+
+```bash
+python run.py --config configs/laminage.toml
+python run.py diagnose runs/latest
+```
+
+Avec l'objectif de bande, l'optimum 1D n'a que 2 interfaces : il n'y a pas de détail à découvrir. Ce test en a un :
+
+```
+J = ∫ (u - u*)² dx      (problem.objective = "target")
+```
+
+u* est la solution exacte pour une densité grise ρ* = V0 + amp sin(2π k x) en loi harmonique (`target_amp`, `target_periods`). En 1D, la loi harmonique (q = A1/A2 - 1) est le mélange exact en série. Cela donne trois références exactes :
+- **optimum relaxé** : ρ = ρ*, J = 0 ;
+- **binaire** : un laminé de N couches qui suit ρ* donne J(N) ≈ 0.227 / N² / J_ref. Plus il y a de couches, mieux c'est ;
+- **avec le périmètre** : chaque interface coûte λ/3 (Van der Waals d'un profil optimal). Le laminé optimal minimise J(N)/J_ref + λ/3 × interfaces, d'où N* = 5, 9, 19, 41 pour λ = 1e-2 … 1e-5.
+
+Le test met tout à l'épreuve à la fois. λ fixe le nombre de couches visé. ε doit être assez petit pour la couche la plus fine, d'épaisseur ≈ (V0 - amp) / N*. Il faut assez de points par interface, et un réseau ρ capable de représenter 2N* interfaces raides. Pour la loi : à q = 0, un gris lisse donne J = 0 sans interface ; à q = 99, gris et laminé sont équivalents ; au-delà, le gris est pénalisé. Enfin, l'optimiseur doit faire naître les couches.
+
 ## 2D
 
 ```bash
@@ -139,12 +159,13 @@ Les réseaux de chaque palier sont rechargés, sans réentraîner. Le tableau (a
 ```
 configs/default.toml        paramètres (1D)
 configs/2d.toml             paramètres (2D)
+configs/laminage.toml       test 1D de microstructure (objectif cible, laminé)
 src/phasefield/
   config.py                 lecture TOML + surcharges
   problem.py                problème 1D : A(ρ), source, bord, objectif, solution exacte
   exact1d.py                solution exacte 1D pour A constant par morceaux
   fv2d.py                   volumes finis 2D (solution de référence, gradient adjoint)
-  references.py             références : optimums exacts (1D), optimisation par densité (2D)
+  references.py             références : optimums exacts et laminés (1D), optimisation par densité (2D)
   quadrature.py             Gauss composite sur [lo, hi]^d
   operators.py              gradient et divergence par autograd (dimension d)
   models.py                 MLP, u à bord fort, ρ = sigmoïde

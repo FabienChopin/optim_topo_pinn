@@ -72,7 +72,7 @@ def main(argv=None):
     problem = make_problem(cfg)
     quad = Quadrature(problem.dim, cfg.quadrature.n_elements, cfg.quadrature.n_gauss,
                       problem.lo, problem.hi, cfg.run.device)
-    if not all(np.isclose(quad.element_edges, b).any() for b in problem.band):
+    if problem.objective_kind == "band" and not all(np.isclose(quad.element_edges, b).any() for b in problem.band):
         log.warning(f"les bornes de la bande {problem.band} ne tombent pas sur des bords d'éléments : "
                     "J est intégré avec une erreur de l'ordre de l'écart entre points")
     log.info(f"J_ref (ρ = V0 partout) = {problem.j_ref:.6e}   points de quadrature : {len(quad)}")

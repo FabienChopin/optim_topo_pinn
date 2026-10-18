@@ -43,9 +43,10 @@ def _evaluate_1d(problem, u_net, rho_net, cfg_output, eps):
     u_exact = exact.u(mid).numpy()
     binary = (rho > 0.5).astype(float)
     n_interfaces = interface_measure(binary)
+    u_target = problem.target.u(mid).numpy() if problem.objective_kind == "target" else None
     return {
-        "x": mid, "rho": rho, "u_pinn": u_pinn, "u_exact": u_exact,
-        "J_exact": float(exact.integral_u2(*problem.band)) / problem.j_ref,
+        "x": mid, "rho": rho, "u_pinn": u_pinn, "u_exact": u_exact, "u_target": u_target,
+        "J_exact": float(problem.objective_of(exact)) / problem.j_ref,
         "J_binary": float(problem.exact_objective(edges, binary)) / problem.j_ref,
         "vol_binary": float(binary.mean()),
         "interfaces": n_interfaces, "interfaces_text": f"{n_interfaces} interfaces",
