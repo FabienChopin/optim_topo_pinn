@@ -1,4 +1,5 @@
-"""Réseaux : u avec conditions de Dirichlet fortes, rho = sigmoïde(N) dans ]0, 1[."""
+"""Réseaux : u avec conditions de Dirichlet fortes, rho = sigmoïde(N) dans ]0, 1[ ; en forme mixte,
+un réseau de plus pour le flux sigma = A grad u."""
 
 import math
 
@@ -9,12 +10,12 @@ import torch.nn as nn
 class MLP(nn.Module):
     """MLP tanh, entrées [lo, hi]^d ramenées sur [-1, 1]^d."""
 
-    def __init__(self, in_dim: int, width: int, depth: int, lo: float = 0.0, hi: float = 1.0):
+    def __init__(self, in_dim: int, width: int, depth: int, lo: float = 0.0, hi: float = 1.0, out_dim: int = 1):
         super().__init__()
         layers = [nn.Linear(in_dim, width), nn.Tanh()]
         for _ in range(depth - 1):
             layers += [nn.Linear(width, width), nn.Tanh()]
-        layers.append(nn.Linear(width, 1))
+        layers.append(nn.Linear(width, out_dim))
         self.net = nn.Sequential(*layers)
         self.lo, self.hi = lo, hi
         for m in self.net:
@@ -42,6 +43,21 @@ class StateNet(nn.Module):
         return self.boundary_factor(x) * self.mlp(x)
 
 
+class MixedStateNet(nn.Module):
+    """Forme mixte : u (bord fort) et flux sigma (N, d) ; forward rend u, comme StateNet."""
+
+    def __init__(self, u: StateNet, flux: MLP):
+        super().__init__()
+        self.u = u
+        self.flux_mlp = flux
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.u(x)
+
+    def flux(self, x: torch.Tensor) -> torch.Tensor:
+        return self.flux_mlp(x)
+
+
 class DensityNet(nn.Module):
     """rho(x) = sigmoïde(N(x)), initialisé presque uniforme à rho = v0."""
 
@@ -54,3 +70,17 @@ class DensityNet(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return torch.sigmoid(self.mlp(x))
+
+
+def make_nets(cfg, problem):
+    """Réseaux u (avec le flux en forme mixte) et rho, sur cfg.run.device."""
+    def mlp(out_dim: int = 1):
+        return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi, out_dim)
+
+    if cfg.loss.form not in ("strong", "mixed"):
+        raise ValueError(f"loss.form = {cfg.loss.form!r} : 'strong' ou 'mixed'")
+    u_net = StateNet(mlp(), problem.boundary_factor)
+    if cfg.loss.form == "mixed":
+        u_net = MixedStateNet(u_net, mlp(problem.dim))
+    rho_net = DensityNet(mlp(), problem.v0)
+    return u_net.to(cfg.run.device), rho_net.to(cfg.run.device)

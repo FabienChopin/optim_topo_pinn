@@ -32,7 +32,7 @@ from scipy import ndimage
 from .config import load_config
 from .diagnostics import evaluate, interface_measure
 from .losses import compute_losses
-from .models import MLP, DensityNet, StateNet
+from .models import make_nets
 from .problem import make_problem
 from .quadrature import PointSet, Quadrature
 from .references import binary_optimum, laminate_optimum
@@ -292,11 +292,8 @@ def main(argv=None):
     fine_quad = Quadrature(problem.dim, q.n_elements * FINE_QUAD[problem.dim], q.n_gauss,
                            problem.lo, problem.hi, args.device)
 
-    def mlp():
-        return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi)
-
-    u_net = StateNet(mlp(), problem.boundary_factor).to(args.device)
-    rho_net = DensityNet(mlp(), problem.v0).to(args.device)
+    cfg.run.device = args.device
+    u_net, rho_net = make_nets(cfg, problem)
 
     ref = None
     if problem.dim == 1:   # référence binaire, recalculée (exacte, quelques secondes)

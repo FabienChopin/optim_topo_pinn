@@ -43,6 +43,9 @@ class LossConfig:
     lam: float = 1e-2
     beta: float = 1e2
     mu: float = 1e2
+    # "strong" : résidu fort -div(A grad u) - f ; "mixed" : flux sigma (réseau en plus),
+    # équilibre div sigma + f et relation de comportement int |sigma - A grad u|^2 / A (sans dérivée de A)
+    form: str = "strong"
 
 
 def _geometric(a: float, b: float, n: int) -> list[float]:

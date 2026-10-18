@@ -19,6 +19,7 @@ L = J / J_ref
 ```
 
 - J_ref est le J exact du matériau homogène ρ = V0.
+- Forme mixte (`loss.form = "mixed"`) : un réseau de plus porte le flux σ = A ∇u, et le résidu devient ∫ (div σ + f)² + ∫ |σ - A ∇u|² / A. Il n'y a plus de dérivée de A : la forme forte, qui contient ∇A · ∇u, est inutilisable dès qu'une interface est raide à fort contraste (test de laminage).
 - Les intégrales utilisent une quadrature de Gauss composite (1000 points par défaut). Les bornes de la bande sont alignées sur des bords d'éléments.
 - ε décroît par paliers géométriques : Adam au premier palier, puis L-BFGS à chaque palier.
 - Loi RAMP : q = 0 donne la loi linéaire (valeur par défaut). q = A1/A2 - 1 (= 99) donne la loi harmonique, c'est-à-dire des couches en série, le mélange exact en 1D. Au-delà, le gris est pénalisé. q peut monter par paliers : `continuation.q0`, `q_max`, `q_start`. Par exemple, `--set continuation.q_max=99 --set continuation.q_start=4` garde la loi linéaire pendant les 5 premiers paliers, puis monte q jusqu'à 99. J_ref reste calculé en loi linéaire (q = 0), pour que J/J_ref soit comparable d'un run à l'autre.

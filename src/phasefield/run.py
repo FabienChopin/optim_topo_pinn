@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 from .config import load_config, to_toml
-from .models import MLP, DensityNet, StateNet
+from .models import make_nets
 from .problem import make_problem
 from .quadrature import Quadrature
 from .references import compute_references
@@ -83,11 +83,7 @@ def main(argv=None):
         log.info(refs[key]["label"])
     log.info(f"références calculées en {time.time() - t:.1f} s")
 
-    def mlp():
-        return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi)
-
-    u_net = StateNet(mlp(), problem.boundary_factor).to(cfg.run.device)
-    rho_net = DensityNet(mlp(), problem.v0).to(cfg.run.device)
+    u_net, rho_net = make_nets(cfg, problem)
 
     trainer = Trainer(cfg, problem, u_net, rho_net, quad, refs, run_dir)
     status = "terminé"

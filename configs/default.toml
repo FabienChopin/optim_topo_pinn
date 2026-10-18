@@ -31,6 +31,7 @@ depth = 3             # couches cachées (tanh)
 lam = 1e-2
 beta = 1e2
 mu = 1e2
+form = "strong"       # "mixed" : réseau de flux σ, résidus div σ + f et |σ - A ∇u|² / A (sans dérivée de A)
 
 [continuation]
 # eps géométrique de eps0 à eps_min en n_stages paliers
