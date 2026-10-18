@@ -59,6 +59,8 @@ u* est la solution exacte pour une densité grise ρ* = V0 + amp sin(2π k x) en
 
 Le test met tout à l'épreuve à la fois. λ fixe le nombre de couches visé. ε doit être assez petit pour la couche la plus fine, d'épaisseur ≈ (V0 - amp) / N*. Il faut assez de points par interface, et un réseau ρ capable de représenter 2N* interfaces raides. Pour la loi : à q = 0, un gris lisse donne J = 0 sans interface ; à q = 99, gris et laminé sont équivalents ; au-delà, le gris est pénalisé. Enfin, l'optimiseur doit faire naître les couches.
 
+Résultats (forme mixte, q = 99) : l'optimum relaxé est retrouvé (J ≈ 1e-4), mais le laminé ne naît pas. La descente sort du gris par la plus grande longueur d'onde, en un gros bloc. Avec la contrainte de densité locale (`[dehomogenization]`, ℓ = 1/3), le gros bloc est empêché, mais ρ reste gris. Un laminé imposé par projection est détruit au palier suivant : le réseau u ne représente pas un laminé à 18 interfaces (erreur sur u d'environ 0.4 à froid).
+
 ## 2D
 
 ```bash

@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 LOSS_LABELS = {"total": "totale", "J": "J / J_ref", "residual": "β · résidu",
-               "vdw": "λ · Van der Waals", "volume": "μ · volume"}
+               "vdw": "λ · Van der Waals", "volume": "μ · volume", "local": "γ · densité locale"}
 
 
 def draw(path: Path, history: dict, checks: list, snap: dict, refs: dict, title: str, summary: str):

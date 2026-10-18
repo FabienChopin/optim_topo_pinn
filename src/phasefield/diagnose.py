@@ -121,11 +121,11 @@ def signed_distance(binary: np.ndarray) -> np.ndarray:
     return np.where(inside, d_in, -d_out) / n
 
 
-def fit_profile(problem, rho_net, eps: float, binary: np.ndarray) -> np.ndarray:
-    """ρ (grille FIT_GRID) d'une copie du réseau ρ recalée sur sigmoïde(d / ε), d distance signée au
-    contour de binary (même grille)."""
+def fit_profile(problem, rho_net, eps: float, binary: np.ndarray, in_place: bool = False) -> np.ndarray:
+    """ρ (grille FIT_GRID) d'une copie du réseau ρ (ou du réseau lui-même) recalée sur sigmoïde(d / ε),
+    d distance signée au contour de binary (même grille)."""
     n = FIT_GRID[problem.dim]
-    net = copy.deepcopy(rho_net)
+    net = rho_net if in_place else copy.deepcopy(rho_net)
     device = next(net.parameters()).device
     dtype = torch.get_default_dtype()
     x = torch.tensor(problem.cells(n)[1].reshape(-1, problem.dim), dtype=dtype, device=device)

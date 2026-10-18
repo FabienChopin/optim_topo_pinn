@@ -147,6 +147,21 @@ class ReferenceConfig:
 
 
 @dataclass
+class DehomogenizationConfig:
+    """Binarisation sous contrainte de densité locale (1D) : à la fin du palier `stage`, la densité
+    relaxée rho_rel est figée ; ensuite la loss reçoit gamma int (F[rho] - F[rho_rel])^2, F filtre chapeau
+    de rayon ell. Une séparation en gros blocs (échelle > ell) viole la contrainte ; en dessous de ell,
+    la densité est libre. ell doit être nettement plus grand que la période visée, pour que le nombre
+    de couches reste choisi par J et le périmètre (test de laminage : ell = 1/3 coûte 4 % au laminé
+    N* = 9 et 50 fois plus à la séparation grossière)."""
+    stage: int = 0            # palier (compté depuis 1) ; 0 : désactivé
+    ell: float = 1.0 / 3.0
+    gamma: float = 10.0
+    init: str = "none"        # "projection" : rho recalé sur un laminé de période init_period qui suit rho_rel
+    init_period: float = 0.1
+
+
+@dataclass
 class Config:
     run: RunConfig = field(default_factory=RunConfig)
     problem: ProblemConfig = field(default_factory=ProblemConfig)
@@ -157,6 +172,7 @@ class Config:
     train: TrainConfig = field(default_factory=TrainConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
     reference: ReferenceConfig = field(default_factory=ReferenceConfig)
+    dehomogenization: DehomogenizationConfig = field(default_factory=DehomogenizationConfig)
 
 
 def _parse_value(text: str):

@@ -4,6 +4,7 @@ import logging
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from . import plotting
@@ -21,7 +22,8 @@ class Trainer:
         self.u_net, self.rho_net = u_net, rho_net
         self.params = list(u_net.parameters()) + list(rho_net.parameters())
         self.run_dir = run_dir
-        self.history = {k: [] for k in ("total", *TERMS, "vol", "grey", "eps")}
+        self.history = {k: [] for k in ("total", *TERMS, "local", "vol", "grey", "eps")}
+        self.local = None    # déshomogénéisation : (points fixes, matrice du filtre, F[rho_rel]) une fois rho_rel figé
         self.history["stage_starts"] = []
         self.checks = []     # diagnostics exacts aux mises à jour de la figure
         self.stages = []     # bilan de fin de palier
@@ -32,7 +34,14 @@ class Trainer:
     # --- une évaluation de la loss : enregistrement, journal, figure ---
     def loss(self):
         total, info = compute_losses(self.problem, self.u_net, self.rho_net, self.quad, self.eps, self.cfg.loss)
-        for k in ("total", *TERMS, "vol", "grey"):
+        info["local"] = 0.0
+        if self.local is not None:   # sur ses points fixes, y compris pendant la nucléation (points tirés au hasard)
+            quad, kernel, target = self.local
+            local = self.cfg.dehomogenization.gamma * quad.integrate((kernel @ self.rho_net(quad.points) - target) ** 2)
+            total = total + local
+            info["local"] = local.item()
+            info["total"] += info["local"]
+        for k in ("total", *TERMS, "local", "vol", "grey"):
             self.history[k].append(info[k])
         self.history["eps"].append(self.eps)
         n = len(self.history["total"])
@@ -40,6 +49,7 @@ class Trainer:
         if n % out.log_every == 0:
             log.info(f"[palier {self.stage} | éval {n:6d}] total {info['total']:.4e}  J/Jref {info['J']:.4e}  "
                      f"β·rés {info['residual']:.2e}  λ·VdW {info['vdw']:.2e}  μ·vol {info['volume']:.2e}  "
+                     f"γ·loc {info['local']:.2e}  "
                      f"vol {info['vol']:.4f}  gris {info['grey']:.3f}")
         if n % out.plot_every == 0:
             self.plot()
@@ -81,6 +91,33 @@ class Trainer:
         ])
         plotting.draw(path or self.run_dir / "live.png", h, self.checks, snap, self.refs, title, summary)
         return snap
+
+    def freeze_relaxed(self):
+        """Fige rho_rel (fin du palier dehomogenization.stage) et active la contrainte de densité locale."""
+        d = self.cfg.dehomogenization
+        if self.problem.dim != 1:
+            raise ValueError("déshomogénéisation : 1D seulement (filtre en matrice dense)")
+        x = self.quad.points
+        dist = (x - x.T).abs()
+        kernel = torch.clamp(1.0 - dist / d.ell, min=0.0) * self.quad.weights.T   # chapeau de rayon ell
+        kernel = kernel / kernel.sum(dim=1, keepdim=True)                          # moyenne locale
+        with torch.no_grad():
+            rho_rel = self.rho_net(x)
+            target = kernel @ rho_rel
+        self.local = (self.quad, kernel, target)
+        log.info(f"déshomogénéisation : ρ relaxé figé (gris {self.history['grey'][-1]:.3f}), "
+                 f"contrainte locale ℓ = {d.ell:g}, γ = {d.gamma:g}")
+        if d.init == "projection":
+            # laminé : dans chaque période, une couche de phase 1 centrée, d'épaisseur rho_rel × période
+            from .diagnose import FIT_GRID, fit_profile
+            _, mid = self.problem.cells(FIT_GRID[1])
+            with torch.no_grad():
+                r = self.rho_net(torch.tensor(mid.reshape(-1, 1), dtype=x.dtype, device=x.device)).cpu().numpy().ravel()
+            phase = (mid / d.init_period) % 1.0
+            binary = (np.abs(phase - 0.5) < 0.5 * r).astype(float)
+            fit_profile(self.problem, self.rho_net, self.eps, binary, in_place=True)
+            log.info(f"déshomogénéisation : ρ recalé sur un laminé de période {d.init_period:g} "
+                     f"({int(np.count_nonzero(np.diff(binary)))} interfaces)")
 
     def nucleate(self):
         """Adam sur des points de Monte-Carlo retirés à chaque pas (voir TrainConfig)."""
@@ -127,6 +164,8 @@ class Trainer:
                 return total
 
             lbfgs.step(closure)
+            if stage + 1 == c.dehomogenization.stage:
+                self.freeze_relaxed()
             snap = self.plot()
             h = self.history
             summary = {"stage": stage, "eps": self.eps, "q": self.problem.q, "evals": len(h["total"]),

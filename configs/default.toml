@@ -75,3 +75,15 @@ filter_radius = 0.03
 q_penal = 300.0
 n_q_steps = 6
 iters_per_step = 300
+
+[dehomogenization]
+# 1D : à la fin du palier `stage` (compté depuis 1, 0 : désactivé), rho relaxé est figé, puis la loss reçoit
+# gamma int (F[rho] - F[rho_rel])^2, F filtre chapeau de rayon ell : pas de séparation en gros blocs
+# (échelle > ell), densité libre en dessous. ell nettement plus grand que la période visée, pour que le
+# nombre de couches reste choisi par J et le périmètre. init = "projection" : rho recalé sur un laminé
+# de période init_period qui suit rho_rel.
+stage = 0
+ell = 0.3333
+gamma = 10.0
+init = "none"
+init_period = 0.1
