@@ -10,6 +10,7 @@ from . import plotting
 from .config import Config
 from .diagnostics import evaluate
 from .losses import TERMS, compute_losses
+from .quadrature import PointSet
 
 log = logging.getLogger("phasefield")
 
@@ -81,6 +82,22 @@ class Trainer:
         plotting.draw(path or self.run_dir / "live.png", h, self.checks, snap, self.refs, title, summary)
         return snap
 
+    def nucleate(self):
+        """Adam sur des points de Monte-Carlo retirés à chaque pas (voir TrainConfig)."""
+        c = self.cfg
+        log.info(f"nucléation : {c.train.nucleation_iters} pas d'Adam sur {len(self.quad)} points tirés au hasard")
+        fixed = self.quad
+        opt = torch.optim.Adam(self.params, lr=c.train.nucleation_lr)
+        try:
+            for _ in range(c.train.nucleation_iters):
+                self.quad = PointSet.monte_carlo(self.problem.dim, len(fixed), self.problem.lo, self.problem.hi,
+                                                 fixed.points.device)
+                opt.zero_grad()
+                self.loss().backward()
+                opt.step()
+        finally:
+            self.quad = fixed
+
     # --- boucle des paliers ---
     def run(self):
         c = self.cfg
@@ -96,6 +113,8 @@ class Trainer:
                     opt.zero_grad()
                     self.loss().backward()
                     opt.step()
+            if stage + 1 in c.train.nucleation_stages:
+                self.nucleate()
             lbfgs = torch.optim.LBFGS(self.params, lr=1.0, max_iter=c.train.lbfgs_iters,
                                       max_eval=int(1.25 * c.train.lbfgs_iters),
                                       history_size=c.train.lbfgs_history, tolerance_grad=1e-12,

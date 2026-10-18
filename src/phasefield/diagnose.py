@@ -34,7 +34,7 @@ from .diagnostics import evaluate, interface_measure
 from .losses import compute_losses
 from .models import MLP, DensityNet, StateNet
 from .problem import make_problem
-from .quadrature import Quadrature
+from .quadrature import PointSet, Quadrature
 from .references import binary_optimum, laminate_optimum
 
 WIDTH_FACTOR = 2.0 * math.log(9.0)   # largeur 10-90 % de sigmoïde(x / ε), en unités de ε
@@ -53,22 +53,12 @@ MIN_FEATURE = 3.0         # plus petit détail, en largeurs d'interface
 MAX_U_ERROR = 1e-2
 
 
-class _Chunk:
-    """Tranche de points d'une quadrature, avec la même interface que Quadrature pour compute_losses."""
-
-    def __init__(self, points: torch.Tensor, weights: torch.Tensor):
-        self.points, self.weights = points, weights
-
-    def integrate(self, values: torch.Tensor) -> torch.Tensor:
-        return (self.weights * values).sum()
-
-
 def integrals(problem, u_net, rho_net, quad: Quadrature, eps: float, weights, batch: int = 20000) -> dict:
     """Termes de la loss (sauf volume, non linéaire), ∫ρ et gris, intégrés par tranches."""
     keys = ("J", "residual", "vdw", "vol", "grey")
     out = dict.fromkeys(keys, 0.0)
     for k in range(0, len(quad), batch):
-        chunk = _Chunk(quad.points[k:k + batch], quad.weights[k:k + batch])
+        chunk = PointSet(quad.points[k:k + batch], quad.weights[k:k + batch])
         _, info = compute_losses(problem, u_net, rho_net, chunk, eps, weights)
         for key in keys:
             out[key] += info[key]

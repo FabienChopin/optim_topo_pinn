@@ -62,6 +62,9 @@ adam_iters = 2000     # premier palier seulement
 adam_lr = 1e-3
 lbfgs_iters = 1000    # à chaque palier
 lbfgs_history = 50
+nucleation_stages = []  # paliers (depuis 1) précédés d'Adam sur points tirés au hasard (amorce la décomposition)
+nucleation_iters = 2000
+nucleation_lr = 1e-3
 
 [output]
 runs_dir = "runs"

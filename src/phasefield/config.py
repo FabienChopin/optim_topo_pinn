@@ -116,6 +116,12 @@ class TrainConfig:
     adam_lr: float = 1e-3
     lbfgs_iters: int = 1000
     lbfgs_history: int = 50
+    # nucléation : avant L-BFGS, Adam sur des points tirés au hasard à chaque pas (Monte-Carlo).
+    # Le bruit d'intégration donne au gradient des composantes oscillantes qui font sortir un gris
+    # lisse du point selle du double puits (sinon la descente, déterministe, y reste).
+    nucleation_stages: list[int] = field(default_factory=list)   # paliers, comptés depuis 1
+    nucleation_iters: int = 2000
+    nucleation_lr: float = 1e-3
 
 
 @dataclass
