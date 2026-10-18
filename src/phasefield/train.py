@@ -1,4 +1,4 @@
-"""Entraînement : paliers géométriques en eps ; Adam au premier palier, puis L-BFGS à chaque palier."""
+"""Entraînement : paliers (ε, q) du calendrier de continuation ; Adam au premier palier, puis L-BFGS à chaque palier."""
 
 import logging
 import time
@@ -24,8 +24,8 @@ class Trainer:
         self.history["stage_starts"] = []
         self.checks = []     # diagnostics exacts aux mises à jour de la figure
         self.stages = []     # bilan de fin de palier
-        self.stage, self.eps = 0, cfg.continuation.eps0
-        problem.q = cfg.continuation.q(0)
+        self.schedule = cfg.continuation.schedule()
+        self.stage, (self.eps, problem.q) = 0, self.schedule[0]
         self.t0 = time.time()
 
     # --- une évaluation de la loss : enregistrement, journal, figure ---
@@ -54,15 +54,14 @@ class Trainer:
         snap = self.snapshot()
         h = self.history
         c = self.cfg
-        title = (f"{c.run.name}   seed {c.run.seed}   palier {self.stage + 1}/{c.continuation.n_stages}   "
+        title = (f"{c.run.name}   seed {c.run.seed}   palier {self.stage + 1}/{len(self.schedule)}   "
                  f"ε = {self.eps:.2e}   q = {self.problem.q:g}   éval {len(h['total'])}   "
                  f"{time.time() - self.t0:.0f} s")
         summary = "\n".join([
             f"A = {c.problem.a2:g} + {c.problem.a1 - c.problem.a2:g} ρ / (1 + q (1 - ρ))   V0 = {c.problem.v0:g}",
-            f"q (RAMP) : {c.continuation.q0:g} -> {c.continuation.q_max:g} "
-            f"(monte après le palier {c.continuation.q_start + 1})",
+            c.continuation.describe()[0],
             f"λ = {c.loss.lam:g}   β = {c.loss.beta:g}   μ = {c.loss.mu:g}",
-            f"ε : {c.continuation.eps0:g} -> {c.continuation.eps_min:g} ({c.continuation.n_stages} paliers)",
+            c.continuation.describe()[1],
             f"points : {len(self.quad)} ({c.quadrature.n_elements} x {c.quadrature.n_gauss} Gauss"
             f"{' par direction' if self.problem.dim > 1 else ''})",
             f"réseaux : {c.model.width} x {c.model.depth} tanh",
@@ -85,11 +84,10 @@ class Trainer:
     # --- boucle des paliers ---
     def run(self):
         c = self.cfg
-        for stage in range(c.continuation.n_stages):
-            self.stage, self.eps = stage, c.continuation.eps(stage)
-            self.problem.q = c.continuation.q(stage)
+        for stage, (eps, q) in enumerate(self.schedule):
+            self.stage, self.eps, self.problem.q = stage, eps, q
             self.history["stage_starts"].append(len(self.history["total"]))
-            log.info(f"===== palier {stage + 1}/{c.continuation.n_stages}   ε = {self.eps:.3e}   "
+            log.info(f"===== palier {stage + 1}/{len(self.schedule)}   ε = {self.eps:.3e}   "
                      f"q = {self.problem.q:g} =====")
             t_stage = time.time()
             if stage == 0 and c.train.adam_iters > 0:
@@ -114,6 +112,7 @@ class Trainer:
             h = self.history
             summary = {"stage": stage, "eps": self.eps, "q": self.problem.q, "evals": len(h["total"]),
                        "time_s": time.time() - t_stage,
+                       "lbfgs_n_iter": lbfgs.state[self.params[0]].get("n_iter", 0),   # = lbfgs_iters : plafond
                        **{k: h[k][-1] for k in ("total", *TERMS, "vol", "grey")},
                        **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "interfaces",
                                                "grey_floor", "u_error")}}
@@ -122,5 +121,6 @@ class Trainer:
                      f"J exact {snap['J_exact']:.4f}  J seuillé {snap['J_binary']:.4f} "
                      f"(vol {snap['vol_binary']:.3f})  gris {h['grey'][-1]:.3f} (plancher {snap['grey_floor']:.3f})  "
                      f"{snap['interfaces_text']}  erreur u {snap['u_error']:.2e}")
-            torch.save({"u": self.u_net.state_dict(), "rho": self.rho_net.state_dict(), "eps": self.eps},
+            torch.save({"u": self.u_net.state_dict(), "rho": self.rho_net.state_dict(), "eps": self.eps,
+                        "q": self.problem.q},
                        self.run_dir / "models" / f"stage_{stage:02d}.pt")

@@ -12,7 +12,7 @@ densité + RAMP avec continuation de q + gradient adjoint + L-BFGS-B (bornes) av
 augmenté pour le volume.
 - binaire : continuation jusqu'à q_penal (le gris est pénalisé), puis seuillage au volume V0 ;
   on garde le meilleur des designs seuillés.
-- relaxé : continuation jusqu'à q_max (la loi finale du PINN), gris permis.
+- relaxé : continuation jusqu'au q final du PINN (continuation.q_final), gris permis.
 """
 
 import numpy as np
@@ -197,16 +197,16 @@ def _threshold_at_volume(rho: np.ndarray, v0: float) -> np.ndarray:
 
 
 def references_2d(problem: BandProblem2D, cfg: Config) -> dict:
-    rcfg, q_max = cfg.reference, cfg.continuation.q_max
+    rcfg, q_final = cfg.reference, cfg.continuation.q_final
     penal = density_optimization_2d(problem, rcfg, rcfg.q_penal)
-    relaxed = density_optimization_2d(problem, rcfg, q_max)
+    relaxed = density_optimization_2d(problem, rcfg, q_final)
     best = None
     for name, rho in (("pénalisé", penal), ("relaxé", relaxed)):
         binary = _to_grid(_threshold_at_volume(rho, problem.v0), problem.n_grid)
         j = problem.objective(binary) / problem.j_ref        # rho in {0, 1} : indépendant de q
         if best is None or j < best[0]:
             best = (j, binary, name)
-    q_saved, problem.q = problem.q, q_max
+    q_saved, problem.q = problem.q, q_final
     relaxed_grid = _to_grid(relaxed, problem.n_grid)
     j_relaxed = problem.objective(relaxed_grid) / problem.j_ref
     problem.q = q_saved
@@ -218,21 +218,21 @@ def references_2d(problem: BandProblem2D, cfg: Config) -> dict:
                             f"design {origin}) : J/J_ref = {j_b:.4f}",
                    "info": {"J": j_b, "volume": float(binary.mean()), "origin": origin}},
         "relaxed": {"J": j_relaxed, "rho_grid": relaxed_grid, "grey": grey,
-                    "label": f"référence relaxée (densité, gris permis, q = {q_max:g}) : "
+                    "label": f"référence relaxée (densité, gris permis, q = {q_final:g}) : "
                              f"J/J_ref = {j_relaxed:.4f}, gris {grey:.3f}",
-                    "info": {"J": j_relaxed, "grey": grey, "q": q_max}},
+                    "info": {"J": j_relaxed, "grey": grey, "q": q_final}},
     }
 
 
 def references_1d(problem: BandProblem1D, cfg: Config) -> dict:
     b = binary_optimum(problem, seed=cfg.run.seed)
-    r = relaxed_optimum(problem, q=cfg.continuation.q_max, binary=b)
+    r = relaxed_optimum(problem, q=cfg.continuation.q_final, binary=b)
     b["label"] = (f"optimum binaire : J/J_ref = {b['J']:.4f}, {b['n_interfaces']} interfaces en "
                   f"{np.round(b['edges'][1:-1], 4).tolist()}, ρ = {b['rho'].astype(int).tolist()}")
     b["info"] = {"J": b["J"], "interfaces": b["edges"][1:-1].tolist(), "rho": b["rho"].tolist()}
-    r["label"] = (f"optimum relaxé (gris permis, q = {cfg.continuation.q_max:g}) : J/J_ref = {r['J']:.4f}, "
+    r["label"] = (f"optimum relaxé (gris permis, q = {cfg.continuation.q_final:g}) : J/J_ref = {r['J']:.4f}, "
                   f"gris {r['grey']:.3f}")
-    r["info"] = {"J": r["J"], "grey": r["grey"], "q": cfg.continuation.q_max}
+    r["info"] = {"J": r["J"], "grey": r["grey"], "q": cfg.continuation.q_final}
     return {"binary": b, "relaxed": r}
 
 

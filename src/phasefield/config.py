@@ -42,26 +42,69 @@ class LossConfig:
     mu: float = 1e2
 
 
+def _geometric(a: float, b: float, n: int) -> list[float]:
+    """n valeurs géométriques de a à b inclus (n = 1 : [a])."""
+    return [a] if n == 1 else [a * (b / a) ** (k / (n - 1)) for k in range(n)]
+
+
 @dataclass
 class ContinuationConfig:
+    """Calendrier des paliers (ε, q).
+
+    Mode couplé (q_values vide) : n_stages paliers, ε géométrique de eps0 à eps_min ; q vaut q0
+    jusqu'au palier q_start, puis monte linéairement jusqu'à q_max au dernier palier.
+
+    Mode en phases (q_values non vide) :
+      1. topologie : n_stages paliers à q = q0, ε géométrique de eps0 à eps_topo ;
+      2. binarisation : un palier par valeur de q_values, ε = eps_topo ;
+      3. netteté : n_sharp_stages paliers à q = q_values[-1], ε géométrique de eps_topo à eps_min.
+    """
     eps0: float = 0.1
     eps_min: float = 4e-3
     n_stages: int = 10
     q0: float = 0.0
     q_max: float = 0.0
     q_start: int = 0
+    eps_topo: float = 0.0
+    q_values: list[float] = field(default_factory=list)
+    n_sharp_stages: int = 0
+
+    @property
+    def phased(self) -> bool:
+        return len(self.q_values) > 0
+
+    @property
+    def q_final(self) -> float:
+        return self.q_values[-1] if self.phased else self.q_max
+
+    def schedule(self) -> list[tuple[float, float]]:
+        """(ε, q) de chaque palier."""
+        if not self.phased:
+            eps = _geometric(self.eps0, self.eps_min, self.n_stages)
+            return [(e, self.q(stage)) for stage, e in enumerate(eps)]
+        if not self.eps_min <= self.eps_topo <= self.eps0:
+            raise ValueError(f"mode en phases : eps_topo = {self.eps_topo:g} doit être entre eps_min et eps0")
+        topo = [(eps, self.q0) for eps in _geometric(self.eps0, self.eps_topo, self.n_stages)]
+        binarize = [(self.eps_topo, float(q)) for q in self.q_values]
+        sharp = [(eps, self.q_final) for eps in _geometric(self.eps_topo, self.eps_min, self.n_sharp_stages + 1)[1:]]
+        return topo + binarize + sharp
+
+    def describe(self) -> list[str]:
+        """Calendrier en clair, pour la figure."""
+        if not self.phased:
+            return [f"q (RAMP) : {self.q0:g} -> {self.q_max:g} (monte après le palier {self.q_start + 1})",
+                    f"ε : {self.eps0:g} -> {self.eps_min:g} ({self.n_stages} paliers)"]
+        q_text = ", ".join(f"{q:g}" for q in self.q_values)
+        return [f"q (RAMP) : {self.q0:g}, puis {q_text} à ε = {self.eps_topo:g}",
+                f"ε : {self.eps0:g} -> {self.eps_topo:g} ({self.n_stages} paliers), "
+                f"puis -> {self.eps_min:g} ({self.n_sharp_stages} paliers)"]
 
     def q(self, stage: int) -> float:
-        """q de RAMP : q0 jusqu'au palier q_start inclus, puis linéaire jusqu'à q_max au dernier palier."""
+        """Mode couplé : q0 jusqu'au palier q_start inclus, puis linéaire jusqu'à q_max au dernier palier."""
         last = self.n_stages - 1
         if stage <= self.q_start or last <= self.q_start:
             return self.q0
         return self.q0 + (self.q_max - self.q0) * (stage - self.q_start) / (last - self.q_start)
-
-    def eps(self, stage: int) -> float:
-        if self.n_stages == 1:
-            return self.eps0
-        return self.eps0 * (self.eps_min / self.eps0) ** (stage / (self.n_stages - 1))
 
 
 @dataclass

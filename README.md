@@ -22,11 +22,21 @@ L = J / J_ref
 - Les intégrales utilisent une quadrature de Gauss composite (1000 points par défaut). Les bornes de la bande sont alignées sur des bords d'éléments.
 - ε décroît par paliers géométriques : Adam au premier palier, puis L-BFGS à chaque palier.
 - Loi RAMP : q = 0 donne la loi linéaire (valeur par défaut). q = A1/A2 - 1 (= 99) donne la loi harmonique, c'est-à-dire des couches en série, le mélange exact en 1D. Au-delà, le gris est pénalisé. q peut monter par paliers : `continuation.q0`, `q_max`, `q_start`. Par exemple, `--set continuation.q_max=99 --set continuation.q_start=4` garde la loi linéaire pendant les 5 premiers paliers, puis monte q jusqu'à 99. J_ref reste calculé en loi linéaire (q = 0), pour que J/J_ref soit comparable d'un run à l'autre.
+- Continuation en phases (`continuation.q_values` non vide), pour faire apparaître les détails puis finir en noir et blanc :
+  1. **topologie** : `n_stages` paliers à q = `q0`, ε de `eps0` à `eps_topo` (≈ 2 à 3 `eps_min`). Le gris est permis et montre où l'optimum veut de la matière ;
+  2. **binarisation** : un palier par valeur de `q_values` (géométrique, l'effet de RAMP est logarithmique en q), à ε = `eps_topo`. Les zones grises se cassent en barres ;
+  3. **netteté** : `n_sharp_stages` paliers à q = `q_values[-1]`, ε de `eps_topo` à `eps_min` (≈ 1.5 × l'écart entre points).
+
+  `λ` fixe la taille des détails (Van der Waals ≈ λ/3 × périmètre) ; ε ne sert qu'à les rendre nets.
+  ```bash
+  python run.py --set continuation.eps_topo=1e-2 --set "continuation.q_values=[1, 3, 10, 30, 99, 300]" \
+                --set continuation.n_sharp_stages=3 --set continuation.n_stages=6
+  ```
 
 En 1D, la solution exacte est connue pour tout ρ (A u' = C - x). Elle sert à trois choses :
 - calculer J_ref ;
 - vérifier u et le vrai J du design courant pendant l'entraînement ;
-- calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (q = `q_max`). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
+- calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (`q_max`, ou `q_values[-1]` en mode en phases). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
 
 ## 2D
 
@@ -103,6 +113,27 @@ Chaque run crée un dossier `runs/<date>_<nom>_s<seed>/`, ignoré par git. `runs
 
 Ctrl-C arrête proprement : l'état courant est sauvegardé.
 
+## Diagnostic a posteriori : qu'est-ce qui a limité ?
+
+```bash
+python run.py diagnose runs/latest              # ou phasefield-diagnose ; --stage 8, --device cuda
+```
+
+Les réseaux de chaque palier sont rechargés, sans réentraîner. Le tableau (aussi écrit dans `diagnose.json`) donne par palier :
+
+| Colonne | Mesure | Limitant si |
+|---|---|---|
+| `r` | netteté 1 / (4 ε \|∇ρ\|) sur ρ = 0.5 (1 = profil optimal sigmoïde(d / ε)) | (information) |
+| `r_fit` | netteté d'une copie du réseau ρ recalée sur sigmoïde(d / ε) | > 1.5 : **réseau ρ** |
+| `pts/if` | points de quadrature à travers une interface (4.4 ε / écart moyen) | < 4 : **points** |
+| `rés f/e`, `ΔVdW`, `ΔJ` | résidu, Van der Waals et J sur une quadrature plus fine / d'entraînement | > 2, > 5 % : **points** |
+| `excès` | gris - plancher 4 ε × interfaces | > 0.02 (et `r_fit` ≈ 1) : **loi (q)** si q < a1/a2 - 1, sinon **gris résiduel** (pénalisé mais pas résorbé) |
+| `détail` | plus petit détail en largeurs d'interface (4.4 ε) | < 3 : **ε** |
+| `plafond` | L-BFGS arrêté au nombre max d'itérations | oui : **optimiseur** |
+| `erreur u` | erreur L2 sur u (exacte en 1D, volumes finis en 2D) | > 1e-2 : **réseau u** |
+
+`r` grand avec `r_fit` ≈ 1 : le réseau saurait faire une interface nette, mais l'optimisation préfère une transition large, c'est-à-dire du gris.
+
 ## Organisation
 
 ```
@@ -119,8 +150,9 @@ src/phasefield/
   models.py                 MLP, u à bord fort, ρ = sigmoïde
   losses.py                 loss totale
   diagnostics.py            évaluation exacte du design courant
+  diagnose.py               diagnostic a posteriori d'un run (facteur limitant par palier)
   plotting.py               figure de suivi
-  train.py                  paliers en ε, Adam puis L-BFGS
+  train.py                  paliers (ε, q), Adam puis L-BFGS
   run.py                    point d'entrée, dossier du run
 ```
 
