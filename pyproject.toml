@@ -8,8 +8,10 @@ dependencies = [
     "jax>=0.4.30",
     "optax>=0.2.3",
     "numpy>=1.26",
-    "matplotlib>=3.8",
 ]
+
+[project.optional-dependencies]
+plot = ["matplotlib>=3.8"]   # plot1d.py (et figures écrites par pinn1d.py sur place)
 
 [tool.ruff]
 line-length = 120

@@ -6,8 +6,10 @@ Exemples :
     python pinn1d.py --interfaces 0.3 0.7 --opt adam:2000 lbfgs:2000 ng:200
     python pinn1d.py --n-interfaces 4 --capacity-only      # le réseau peut-il représenter la cible ?
 
-Pendant le calcul : runs1d/latest/live.png est réécrite (ρ, u, loss, topologie).
-À la fin : runs1d/<date>_<nom>/ contient final.png, capacity.png, log.txt, metrics.json, config.json.
+Pendant le calcul, runs1d/latest/live.npz contient l'état courant (ρ, u, loss, topologie). Les figures en
+sont tirées par plot1d.py, ici ou sur une autre machine (python plot1d.py --help). Si matplotlib est installé
+là où le calcul tourne, live.png et capacity.png sont aussi écrits sur place.
+À la fin : runs1d/<date>_<nom>/ contient live.npz, capacity.npz, log.txt, metrics.json, config.json, params.npz.
 """
 
 import argparse
@@ -19,16 +21,19 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import matplotlib
 import numpy as np
 import optax
 from jax.flatten_util import ravel_pytree
 
 jax.config.update("jax_enable_x64", True)
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+try:   # figures sur place si matplotlib est installé ; sinon, python plot1d.py ailleurs
+    import plot1d
+    plot1d.use_files()
+except ImportError:
+    plot1d = None
 
 FINE = 50000          # cellules de la solution exacte (diagnostics, cibles)
+PLOT_STEP = 10        # données des figures : une cellule fine sur PLOT_STEP (5000 points)
 CAP_RHO_TOL = 1e-2    # capacité : erreur L2 relative sur rho_eps
 CAP_U_TOL = 1e-2      # capacité : erreur H1 relative sur u_eps
 
@@ -318,74 +323,21 @@ def capacity(pb: Problem, a, key, log):
         f"rho erreur L2 rel {res['rho_error']:.2e}, "
         f"{res['rho_interfaces']}/{len(pb.interfaces)} interfaces ; u (forme forte, rho_eps fixé) erreur H1 rel "
         f"{res['u_error_h1']:.2e} -> {'OK' if res['ok'] else 'HORS DE PORTÉE'}")
-    fig, ax = plt.subplots(1, 2, figsize=(13, 4.5))
-    ax[0].plot(pb.mid, pb.rho_star, "k", lw=0.8, label="ρ* binaire")
-    ax[0].plot(pb.mid, rho_eps, "g--", label="ρ_ε cible")
-    ax[0].plot(pb.mid, rho_fit, "C0", label=f"réseau (erreur {res['rho_error']:.1e})")
-    ax[1].plot(pb.edges, pb.u_eps_nodes, "k", label="u exact pour ρ_ε")
-    ax[1].plot(pb.edges, u_fit, "C1--", label=f"réseau, forme forte (erreur H1 {res['u_error_h1']:.1e})")
-    for a_ in ax:
-        a_.legend()
-        a_.grid(alpha=0.3)
-    fig.suptitle(f"test de capacité : {a.width} x {a.depth} tanh, ε = {pb.eps:g}, {len(pb.interfaces)} interface(s)")
-    fig.tight_layout()
-    return res, fig
+    k = PLOT_STEP
+    data = {"x": pb.mid[::k], "rho_star": pb.rho_star[::k], "rho_eps": rho_eps[::k], "rho_fit": rho_fit[::k],
+            "xu": pb.edges[::k], "u_eps": pb.u_eps_nodes[::k], "u_fit": u_fit[::k],
+            "rho_error": res["rho_error"], "u_error_h1": res["u_error_h1"],
+            "title": f"test de capacité : {a.width} x {a.depth} tanh, ε = {pb.eps:g}, {len(pb.interfaces)} "
+                     f"interface(s) -> {'OK' if res['ok'] else 'HORS DE PORTÉE'}"}
+    return res, data
 
 
-# --- figure de suivi ---
-def draw(path, pb, snap, hist, checks, title, summary):
-    fig, ax = plt.subplots(2, 3, figsize=(19, 9.5))
-    a = ax[0, 0]
-    a.plot(pb.mid, pb.rho_star, "k", lw=0.8, label="ρ* binaire")
-    a.plot(pb.mid, pb.profile(pb.mid), "g--", lw=0.8, label="ρ_ε cible")
-    a.plot(pb.mid, snap["rho"], "C0", label="ρ réseau")
-    a.set_title("ρ(x)")
-    a = ax[0, 1]
-    a.plot(pb.edges, pb.u_star_nodes, "r", lw=0.9, label="u* cible")
-    a.plot(pb.edges, snap["u_exact"], "k", label="u exact (ρ du réseau)")
-    a.plot(pb.edges, snap["u"], "C1--", label="u réseau")
-    a.set_title(f"u(x)   erreur relative {snap['u_error']:.2e}")
-    t = np.asarray(hist["terms"])
-    it = np.arange(1, len(t) + 1)
-    a = ax[0, 2]
-    if len(t):
-        a.semilogy(it, np.maximum(t.sum(axis=1), 1e-16), "k", lw=1.5, label="totale")
-        for k, name in enumerate(Loss.TERMS):
-            if t[:, k].max() > 0:
-                a.semilogy(it, np.maximum(t[:, k], 1e-16), lw=1.0, label=name)
-    a.set_title("termes de la loss")
-    a = ax[1, 0]
-    if checks:
-        c = np.asarray([[k["iter"], k["J_exact"], k["rho_error"]] for k in checks])
-        a.semilogy(c[:, 0], c[:, 1], "C4o-", ms=3, label="J exact / J_ref (ρ du réseau)")
-        a.semilogy(c[:, 0], c[:, 2], "C2s-", ms=3, label="écart RMS ρ - ρ*")
-    if len(t):
-        a.semilogy(it, np.maximum(t[:, 0], 1e-16), "C0", lw=0.8, label="J PINN / J_ref")
-    a.set_title("objectif et écart au binaire")
-    a = ax[1, 1]
-    if checks:
-        c = np.asarray([[k["iter"], k["interfaces"], k["position_error"]] for k in checks])
-        a.plot(c[:, 0], c[:, 1], "C3o-", ms=3, label="interfaces trouvées")
-        a.axhline(len(pb.interfaces), color="C3", ls=":", lw=0.8)
-        b = a.twinx()
-        b.semilogy(c[:, 0], c[:, 2], "C5s-", ms=3, label="erreur de position (max)")
-        b.legend(loc="upper right")
-    a.set_title("topologie")
-    for a in (ax[0, 0], ax[0, 1], ax[0, 2], ax[1, 0], ax[1, 1]):
-        a.grid(alpha=0.3)
-        if a.get_legend_handles_labels()[0]:
-            a.legend(loc="best", fontsize=8)
-    for a in (ax[0, 2], ax[1, 0], ax[1, 1]):
-        for s in hist["phase_starts"][1:]:
-            a.axvline(s, color="0.6", ls=":", lw=0.7)
-        a.set_xlabel("itérations")
-    ax[1, 2].axis("off")
-    ax[1, 2].text(0.0, 1.0, summary, va="top", family="monospace", fontsize=9, transform=ax[1, 2].transAxes)
-    fig.suptitle(title)
-    fig.tight_layout()
-    tmp = path.with_name(path.stem + ".tmp.png")
-    fig.savefig(tmp, dpi=80)
-    plt.close(fig)
+# --- données des figures (plot1d.py) ---
+def save_npz(path: Path, data: dict):
+    """Écriture atomique : un lecteur (plot1d.py --watch, copie distante) ne voit jamais un fichier partiel."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as f:
+        np.savez(f, **data)
     os.replace(tmp, path)
 
 
@@ -454,15 +406,18 @@ def main(argv=None):
         log_file.write(line + "\n")
         log_file.flush()
 
-    log(f"run : {run_dir}   appareil : {jax.devices()[0]}   suivi : {run_dir / 'live.png'}")
+    log(f"run : {run_dir}   appareil : {jax.devices()[0]}")
+    log(f"suivi : python plot1d.py {run_dir} --watch"
+        + ("" if plot1d is None else f"   (ou l'image {run_dir / 'live.png'})"))
     log(f"cible : interfaces {np.round(pb.interfaces, 4).tolist()}, V* = {pb.volume:.4f}, J_ref = {pb.j_ref:.4e}")
     key = jax.random.PRNGKey(a.seed)
     metrics = {}
     if not a.no_capacity:
         log("test de capacité : ajustement des réseaux sur la cible (environ 1 min sur CPU)")
-        cap, fig = capacity(pb, a, jax.random.fold_in(key, 1), log)
-        fig.savefig(run_dir / "capacity.png", dpi=80)
-        plt.close(fig)
+        cap, data = capacity(pb, a, jax.random.fold_in(key, 1), log)
+        save_npz(run_dir / "capacity.npz", data)
+        if plot1d is not None:
+            plot1d.draw_capacity(data, run_dir / "capacity.png")
         metrics["capacity"] = cap
         if a.capacity_only:
             (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
@@ -476,16 +431,18 @@ def main(argv=None):
     t0 = time.time()
     phase_name = "init"
 
-    def report():
+    def report(done=False, verdict=""):
         snap = evaluate(pb, theta, unravel)
         n = len(hist["terms"])
         checks.append({"iter": n, **{k: snap[k] for k in ("J_exact", "u_error", "rho_error", "interfaces",
                                                          "position_error")}})
         terms = hist["terms"][-1] if n else np.zeros(4)
-        log(f"[{phase_name} | it {n:6d}] L {terms.sum():.3e}  J {terms[0]:.2e}  rés {terms[1]:.2e}  "
-            f"VdW {terms[2]:.2e}  vol {terms[3]:.1e} | J exact {snap['J_exact']:.2e}  erreur u {snap['u_error']:.1e}  "
-            f"ρ-ρ* {snap['rho_error']:.2e}  {snap['interfaces']}/{len(pb.interfaces)} interfaces  "
-            f"pos {snap['position_error']:.1e}")
+        if not done:
+            log(f"[{phase_name} | it {n:6d}] L {terms.sum():.3e}  J {terms[0]:.2e}  rés {terms[1]:.2e}  "
+                f"VdW {terms[2]:.2e}  vol {terms[3]:.1e} | J exact {snap['J_exact']:.2e}  "
+                f"erreur u {snap['u_error']:.1e}  "
+                f"ρ-ρ* {snap['rho_error']:.2e}  {snap['interfaces']}/{len(pb.interfaces)} interfaces  "
+                f"pos {snap['position_error']:.1e}")
         summary = "\n".join([
             f"cible : {len(pb.interfaces)} interface(s) en {np.round(pb.interfaces, 3).tolist()}",
             f"A = {a.a2:g} + {a.a1 - a.a2:g} ρ / (1 + {a.q:g} (1 - ρ)),  f = {a.source:g}",
@@ -504,7 +461,20 @@ def main(argv=None):
             f"erreur relative u     {snap['u_error']:.2e}",
         ])
         title = f"{name}   seed {a.seed}   {phase_name}   it {n}   {time.time() - t0:.0f} s"
-        draw(run_dir / "live.png", pb, snap, hist, checks, title, summary)
+        k = PLOT_STEP
+        data = {
+            "x": pb.mid[::k], "rho_star": pb.rho_star[::k], "rho_eps": pb.profile(pb.mid[::k]), "rho": snap["rho"][::k],
+            "xu": pb.edges[::k], "u_star": pb.u_star_nodes[::k], "u_exact": snap["u_exact"][::k], "u": snap["u"][::k],
+            "u_error": snap["u_error"], "terms": np.asarray(hist["terms"]).reshape(-1, 4),
+            "checks": np.asarray([[c[col] for col in ("iter", "J_exact", "u_error", "rho_error", "interfaces",
+                                                      "position_error")] for c in checks], dtype=float),
+            "phase_starts": np.asarray(hist["phase_starts"], dtype=int), "n_target": len(pb.interfaces),
+            "eps": a.eps, "title": title, "summary": summary, "done": done, "verdict": verdict,
+        }
+        save_npz(run_dir / "live.npz", data)
+        if plot1d is not None:
+            fig = plot1d.draw_live(data, run_dir / ("final.png" if done else "live.png"))
+            plot1d.plt_close(fig)
         return snap
 
     report()
@@ -537,17 +507,18 @@ def main(argv=None):
                     report()
         else:
             raise ValueError(f"optimiseur inconnu : {phase_name!r} (adam, lbfgs, ng)")
-    snap = evaluate(pb, theta, unravel)   # état déjà tracé par le dernier report()
+    snap = evaluate(pb, theta, unravel)
     np.savez(run_dir / "params.npz", theta=np.asarray(theta))
     found = snap["interfaces"] == len(pb.interfaces) and snap["position_error"] < a.eps
+    verdict = (f"{'TOPOLOGIE RETROUVÉE' if found else 'TOPOLOGIE NON RETROUVÉE'} ({snap['interfaces']}/"
+               f"{len(pb.interfaces)} interfaces, erreur de position {snap['position_error']:.2e} pour ε = {a.eps:g}, "
+               f"J exact {snap['J_exact']:.3e})")
+    checks.pop()   # le dernier état est re-rapporté, marqué comme final
+    report(done=True, verdict=verdict)
     metrics["final"] = {**checks[-1], "found": bool(found)}
     metrics["time_s"] = time.time() - t0
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
-    os.replace(run_dir / "live.png", run_dir / "final.png")
-    (run_dir / "live.png").symlink_to("final.png")
-    log(f"terminé en {metrics['time_s']:.0f} s : {'TOPOLOGIE RETROUVÉE' if found else 'TOPOLOGIE NON RETROUVÉE'} "
-        f"({snap['interfaces']}/{len(pb.interfaces)} interfaces, erreur de position {snap['position_error']:.2e} "
-        f"pour ε = {a.eps:g}, J exact {snap['J_exact']:.3e})   -> {run_dir / 'final.png'}")
+    log(f"terminé en {metrics['time_s']:.0f} s : {verdict}")
 
 
 if __name__ == "__main__":

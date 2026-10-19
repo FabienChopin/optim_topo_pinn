@@ -8,7 +8,7 @@ Un seul script, `pinn1d.py`, en JAX. On se donne un design binaire ρ* à N inte
 ## Installation
 
 ```bash
-uv venv && uv pip install jax optax numpy matplotlib        # CPU
+uv venv && uv pip install jax optax numpy matplotlib        # CPU (matplotlib : pour les figures)
 uv pip install "jax[cuda12]"                                # GPU NVIDIA (en plus)
 ```
 
@@ -18,10 +18,10 @@ JAX prend le GPU automatiquement s'il est disponible. `JAX_PLATFORMS=cpu` force 
 
 ```bash
 python pinn1d.py                                  # 1 interface, Adam 2000 puis L-BFGS 2000
-display -update 2 runs1d/latest/live.png          # suivi en direct (ou tout visualiseur d'images)
+python plot1d.py runs1d/latest --watch            # dans un autre terminal : figure mise à jour en direct
 ```
 
-Le log affiche le verdict du test de capacité, une ligne par mise à jour de la figure, puis un verdict final : `TOPOLOGIE RETROUVÉE` (bon nombre d'interfaces, chacune à moins de ε de sa cible) ou `TOPOLOGIE NON RETROUVÉE`.
+Le log affiche le verdict du test de capacité, une ligne par mise à jour, puis un verdict final : `TOPOLOGIE RETROUVÉE` (bon nombre d'interfaces, chacune à moins de ε de sa cible) ou `TOPOLOGIE NON RETROUVÉE`.
 
 Exemples courants :
 
@@ -74,7 +74,21 @@ Il est lancé avant chaque entraînement, sauf avec `--no-capacity`. Il se fait 
 - **ρ** : le réseau est ajusté sur le profil cible ρ_ε = sigmoïde(d/ε), qui est le profil optimal de Van der Waals.
 - **u** : le réseau est entraîné en forme forte avec ρ = ρ_ε **fixé**, donné exactement et non par un réseau.
 
-Le verdict est « OK » si l'erreur L² relative sur ρ est < 1e-2 avec le bon nombre d'interfaces, et si l'erreur H¹ relative sur u est < 1e-2. Sinon, la topologie visée est **hors de portée** de ces réseaux, quel que soit l'optimiseur : il faut un réseau plus gros, ou un ε plus grand. Les ajustements obtenus sont dans `capacity.png`.
+Le verdict est « OK » si l'erreur L² relative sur ρ est < 1e-2 avec le bon nombre d'interfaces, et si l'erreur H¹ relative sur u est < 1e-2. Sinon, la topologie visée est **hors de portée** de ces réseaux, quel que soit l'optimiseur : il faut un réseau plus gros, ou un ε plus grand. Les ajustements obtenus sont dans `capacity.npz`, et dans `capacity.png` une fois tracés.
+
+## Figures et suivi : `plot1d.py`
+
+`pinn1d.py` n'a pas besoin de matplotlib. À chaque mise à jour, il écrit l'état courant dans `live.npz` : ρ, u, les loss et la topologie, sur 5000 points, soit quelques centaines de ko. `plot1d.py` en tire les figures, sur la machine qui calcule ou sur une autre. Il ne demande que numpy et matplotlib, pas JAX.
+
+```bash
+python plot1d.py runs1d/latest                    # une fois : live.png et capacity.png dans le dossier
+python plot1d.py runs1d/latest --watch            # fenêtre redessinée à chaque nouvel état, jusqu'à la fin
+python plot1d.py runs1d/latest --watch --png      # sans affichage graphique : réécrit live.png
+```
+
+**Calcul ailleurs (container GPU, machine distante).** Il suffit de copier `live.npz` (et `capacity.npz`) du run vers le PC, par le moyen de votre choix. `plot1d.py --watch` sur le dossier de destination redessine à chaque nouvelle version.
+
+Les écritures sont atomiques : une copie faite pendant le run ne récupère jamais un fichier partiel. À la fin du run, `plot1d.py` écrit `final.png` et s'arrête. Si matplotlib est installé là où le calcul tourne, `pinn1d.py` écrit aussi lui-même `live.png`, `capacity.png` et `final.png`.
 
 ## Sorties
 
@@ -82,10 +96,11 @@ Chaque run va dans `runs1d/<date>_<nom>_s<seed>/`, et `runs1d/latest` pointe ver
 
 | fichier | contenu |
 |---|---|
-| `live.png` → `final.png` | ρ et u (réseau, cible, solution exacte du ρ courant), loss par terme, J exact, interfaces trouvées et erreur de position |
-| `capacity.png` | ajustements du test de capacité |
+| `live.npz` | état courant : ρ et u (réseau, cible, solution exacte du ρ courant), loss par terme, J exact, interfaces et erreur de position. Marqué final à la fin du run. |
+| `capacity.npz` | ajustements du test de capacité |
 | `log.txt` | journal |
 | `metrics.json` | capacité, dernier état, verdict (`found`) |
 | `config.json`, `params.npz` | options du run, paramètres finaux |
+| `live.png`, `capacity.png`, `final.png` | figures, écrites par `plot1d.py`, ou par `pinn1d.py` si matplotlib est présent |
 
 Une remarque sur les positions par défaut : avec `--n-interfaces N`, les interfaces sont en 0,1 + 0,8 (k + 0,6)/N et jamais en 0,5. À l'initialisation, les biais sont nuls, donc le MLP tanh est impair en 2x − 1 et ρ croise 0,5 en x = 0,5. Une cible centrée serait favorisée.
