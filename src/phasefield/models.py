@@ -1,5 +1,5 @@
 """Réseaux : u avec conditions de Dirichlet fortes, rho = sigmoïde(N) dans ]0, 1[ ; en forme mixte,
-un réseau de plus pour le flux sigma = A grad u."""
+un réseau de plus pour le flux sigma = A grad u ; en forme de Ritz, un réseau de plus pour l'adjoint p."""
 
 import math
 
@@ -58,6 +58,18 @@ class MixedStateNet(nn.Module):
         return self.flux_mlp(x)
 
 
+class RitzStateNet(nn.Module):
+    """Forme de Ritz : état u et adjoint p (bords forts tous les deux) ; forward rend u, comme StateNet."""
+
+    def __init__(self, u: StateNet, adjoint: StateNet):
+        super().__init__()
+        self.u = u
+        self.adjoint = adjoint
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.u(x)
+
+
 class DensityNet(nn.Module):
     """rho(x) = sigmoïde(N(x)), initialisé presque uniforme à rho = v0."""
 
@@ -73,14 +85,18 @@ class DensityNet(nn.Module):
 
 
 def make_nets(cfg, problem):
-    """Réseaux u (avec le flux en forme mixte) et rho, sur cfg.run.device."""
+    """Réseaux u (avec le flux en forme mixte, l'adjoint en forme de Ritz) et rho, sur cfg.run.device."""
     def mlp(out_dim: int = 1):
         return MLP(problem.dim, cfg.model.width, cfg.model.depth, problem.lo, problem.hi, out_dim)
 
-    if cfg.loss.form not in ("strong", "mixed"):
-        raise ValueError(f"loss.form = {cfg.loss.form!r} : 'strong' ou 'mixed'")
+    if cfg.loss.form not in ("strong", "mixed", "ritz"):
+        raise ValueError(f"loss.form = {cfg.loss.form!r} : 'strong', 'mixed' ou 'ritz'")
+    if cfg.loss.form == "ritz" and problem.dim != 1:
+        raise ValueError("loss.form = 'ritz' : 1D seulement (matrice de Gram dense, certificat 1D)")
     u_net = StateNet(mlp(), problem.boundary_factor)
     if cfg.loss.form == "mixed":
         u_net = MixedStateNet(u_net, mlp(problem.dim))
+    elif cfg.loss.form == "ritz":
+        u_net = RitzStateNet(u_net, StateNet(mlp(), problem.boundary_factor))
     rho_net = DensityNet(mlp(), problem.v0)
     return u_net.to(cfg.run.device), rho_net.to(cfg.run.device)

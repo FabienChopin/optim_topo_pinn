@@ -8,8 +8,13 @@ Forme mixte (loss.form = "mixed") : flux sigma = A grad u porté par un réseau,
     R = int (div sigma + f)^2 + int |sigma - A grad u|^2 / A.
 Le second terme est l'erreur en relation de comportement, en norme d'énergie : aucune des deux phases
 n'est favorisée. Pas de dérivée de A ; sigma est continu à travers les interfaces, seul grad u saute.
+Forme de Ritz (loss.form = "ritz") : u et l'adjoint p sont résolus à rho fixé (ritz.py, Trainer) ; pas
+de résidu. Le terme J devient le lagrangien, u et p détachés :
+    J(u) - [int A(rho) u' p' - int f p],
+de valeur J à la solution exacte et de gradient en rho le gradient réduit -int A'(rho) u' p' δrho.
 """
 
+import torch
 
 from .config import LossConfig
 from .operators import div, grad
@@ -24,7 +29,13 @@ def compute_losses(problem, u_net, rho_net, quad: Quadrature, eps: float, w: Los
     u = u_net(x)
     rho = rho_net(x)
     a = problem.conductivity(rho)
-    if w.form == "mixed":
+    objective = problem.objective_density(x, u)
+    if w.form == "ritz":
+        p = u_net.adjoint(x)
+        du, dp = grad(u, x).detach(), grad(p, x).detach()
+        objective = objective.detach() - (a * (du * dp).sum(dim=1, keepdim=True) - problem.source(x) * p.detach())
+        residual_density = torch.zeros_like(u)
+    elif w.form == "mixed":
         sigma = u_net.flux(x)
         residual_density = ((div(sigma, x) + problem.source(x)) ** 2
                             + ((sigma - a * grad(u, x)) ** 2).sum(dim=1, keepdim=True) / a)
@@ -33,7 +44,7 @@ def compute_losses(problem, u_net, rho_net, quad: Quadrature, eps: float, w: Los
     vdw = eps * (grad(rho, x) ** 2).sum(dim=1, keepdim=True) + rho ** 2 * (1.0 - rho) ** 2 / eps
     volume = quad.integrate(rho)
     terms = {
-        "J": quad.integrate(problem.objective_density(x, u)) / problem.j_ref,
+        "J": quad.integrate(objective) / problem.j_ref,
         "residual": w.beta * quad.integrate(residual_density),
         "vdw": w.lam * quad.integrate(vdw),
         "volume": w.mu * (volume - problem.v0) ** 2,

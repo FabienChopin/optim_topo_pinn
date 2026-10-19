@@ -22,10 +22,28 @@ class Quadrature:
         pts = np.stack([g.ravel() for g in np.meshgrid(*[x1] * dim, indexing="ij")], axis=1)
         wts = np.prod(np.stack([g.ravel() for g in np.meshgrid(*[w1] * dim, indexing="ij")], axis=1), axis=1)
         self.dim = dim
+        self.n_elements, self.n_gauss = n_elements, n_gauss
         self.element_edges = np.linspace(lo, hi, n_elements + 1)
         dtype = torch.get_default_dtype()
         self.points = torch.tensor(pts, dtype=dtype, device=device).reshape(-1, dim)
         self.weights = torch.tensor(wts, dtype=dtype, device=device).reshape(-1, 1)
+        # 1D : S_ij = int_{-1}^{t_i} l_j (l_j : polynôme de Lagrange des nœuds de Gauss t de l'élément de référence)
+        t, w = np.polynomial.legendre.leggauss(n_gauss)
+        coef = np.linalg.inv(np.polynomial.legendre.legvander(t, n_gauss - 1))
+        self._cum = torch.tensor(np.polynomial.legendre.legval(t, np.polynomial.legendre.legint(coef, lbnd=-1)).T,
+                                 dtype=dtype, device=device)
+        self._ref_weights = torch.tensor(w, dtype=dtype, device=device)
+
+    def cumulative(self, values: torch.Tensor) -> torch.Tensor:
+        """1D : int_lo^x values aux points, exacte pour values polynomiale de degré < n_gauss par élément."""
+        if self.dim != 1:
+            raise ValueError("intégrale cumulée : 1D seulement")
+        v = values.reshape(self.n_elements, self.n_gauss)
+        half = 0.5 * (self.element_edges[1] - self.element_edges[0])
+        within = half * v @ self._cum.T
+        totals = half * v @ self._ref_weights
+        before = torch.cumsum(totals, dim=0) - totals
+        return (before[:, None] + within).reshape(-1, 1)
 
     def __len__(self) -> int:
         return self.points.shape[0]

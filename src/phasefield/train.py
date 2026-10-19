@@ -1,4 +1,8 @@
-"""Entraînement : paliers (ε, q) du calendrier de continuation ; Adam au premier palier, puis L-BFGS à chaque palier."""
+"""Entraînement : paliers (ε, q) du calendrier de continuation ; Adam au premier palier, puis L-BFGS à chaque palier.
+
+Forme de Ritz : Adam et L-BFGS ne portent que sur rho ; chaque évaluation de la loss commence par
+résoudre u puis l'adjoint p à rho fixé (gradient naturel, ritz.py) : L-BFGS minimise la fonctionnelle
+réduite."""
 
 import logging
 import time
@@ -11,7 +15,8 @@ from . import plotting
 from .config import Config
 from .diagnostics import evaluate
 from .losses import TERMS, compute_losses
-from .quadrature import PointSet
+from .quadrature import PointSet, Quadrature
+from .ritz import RitzSolver
 
 log = logging.getLogger("phasefield")
 
@@ -20,9 +25,17 @@ class Trainer:
     def __init__(self, cfg: Config, problem, u_net, rho_net, quad, refs: dict, run_dir: Path):
         self.cfg, self.problem, self.quad, self.refs = cfg, problem, quad, refs
         self.u_net, self.rho_net = u_net, rho_net
-        self.params = list(u_net.parameters()) + list(rho_net.parameters())
+        self.ritz = cfg.loss.form == "ritz"
+        if self.ritz:
+            self.solvers = (RitzSolver(u_net.u, cfg.ritz), RitzSolver(u_net.adjoint, cfg.ritz))
+            self.check_quad = Quadrature(1, cfg.quadrature.n_elements * cfg.ritz.check_refine, cfg.quadrature.n_gauss,
+                                         problem.lo, problem.hi, cfg.run.device)
+            self.params = list(rho_net.parameters())
+        else:
+            self.params = list(u_net.parameters()) + list(rho_net.parameters())
+        self.ritz_info = {"cert_u": 0.0, "cert_p": 0.0, "steps_u": 0, "steps_p": 0}
         self.run_dir = run_dir
-        self.history = {k: [] for k in ("total", *TERMS, "local", "vol", "grey", "eps")}
+        self.history = {k: [] for k in ("total", *TERMS, "local", "vol", "grey", "eps", "cert_u", "cert_p")}
         self.local = None    # déshomogénéisation : (points fixes, matrice du filtre, F[rho_rel]) une fois rho_rel figé
         self.history["stage_starts"] = []
         self.checks = []     # diagnostics exacts aux mises à jour de la figure
@@ -31,8 +44,25 @@ class Trainer:
         self.stage, (self.eps, problem.q) = 0, self.schedule[0]
         self.t0 = time.time()
 
+    def solve_state(self):
+        """Forme de Ritz : u puis l'adjoint p, à rho fixé, sur les points courants (contrôle : check_quad)."""
+        quads = (self.quad, self.check_quad)
+        with torch.no_grad():
+            a = [self.problem.conductivity(self.rho_net(q.points)) for q in quads]
+        solve_u, solve_p = self.solvers
+        f = [self.problem.source(q.points) for q in quads]
+        cert_u, steps_u = solve_u.solve(self.quad, a[0], f[0], (self.check_quad, a[1], f[1]))
+        dj = []
+        for q in quads:
+            u = self.u_net(q.points).detach().requires_grad_(True)
+            dj.append(torch.autograd.grad(self.problem.objective_density(q.points, u).sum(), u)[0])   # 2 (u - u*)
+        cert_p, steps_p = solve_p.solve(self.quad, a[0], dj[0], (self.check_quad, a[1], dj[1]))
+        self.ritz_info = {"cert_u": cert_u, "cert_p": cert_p, "steps_u": steps_u, "steps_p": steps_p}
+
     # --- une évaluation de la loss : enregistrement, journal, figure ---
     def loss(self):
+        if self.ritz:
+            self.solve_state()
         total, info = compute_losses(self.problem, self.u_net, self.rho_net, self.quad, self.eps, self.cfg.loss)
         info["local"] = 0.0
         if self.local is not None:   # sur ses points fixes, y compris pendant la nucléation (points tirés au hasard)
@@ -44,13 +74,17 @@ class Trainer:
         for k in ("total", *TERMS, "local", "vol", "grey"):
             self.history[k].append(info[k])
         self.history["eps"].append(self.eps)
+        for k in ("cert_u", "cert_p"):
+            self.history[k].append(self.ritz_info[k])
         n = len(self.history["total"])
         out = self.cfg.output
         if n % out.log_every == 0:
             log.info(f"[palier {self.stage} | éval {n:6d}] total {info['total']:.4e}  J/Jref {info['J']:.4e}  "
                      f"β·rés {info['residual']:.2e}  λ·VdW {info['vdw']:.2e}  μ·vol {info['volume']:.2e}  "
                      f"γ·loc {info['local']:.2e}  "
-                     f"vol {info['vol']:.4f}  gris {info['grey']:.3f}")
+                     f"vol {info['vol']:.4f}  gris {info['grey']:.3f}"
+                     + (f"  Ritz u {self.ritz_info['cert_u']:.1e} ({self.ritz_info['steps_u']} pas)"
+                        f"  p {self.ritz_info['cert_p']:.1e} ({self.ritz_info['steps_p']} pas)" if self.ritz else ""))
         if n % out.plot_every == 0:
             self.plot()
         return total
@@ -88,6 +122,7 @@ class Trainer:
             f"gris G               {h['grey'][-1]:.4f}",
             f"plancher 4ε·n        {snap['grey_floor']:.4f}   ({snap['interfaces_text']})",
             f"erreur L2 sur u      {snap['u_error']:.2e}",
+            *([f"certificat Ritz u    {h['cert_u'][-1]:.2e}   p {h['cert_p'][-1]:.2e}"] if self.ritz else []),
         ])
         plotting.draw(path or self.run_dir / "live.png", h, self.checks, snap, self.refs, title, summary)
         return snap
@@ -171,14 +206,15 @@ class Trainer:
             summary = {"stage": stage, "eps": self.eps, "q": self.problem.q, "evals": len(h["total"]),
                        "time_s": time.time() - t_stage,
                        "lbfgs_n_iter": lbfgs.state[self.params[0]].get("n_iter", 0),   # = lbfgs_iters : plafond
-                       **{k: h[k][-1] for k in ("total", *TERMS, "vol", "grey")},
+                       **{k: h[k][-1] for k in ("total", *TERMS, "vol", "grey", "cert_u", "cert_p")},
                        **{k: snap[k] for k in ("J_exact", "J_binary", "vol_binary", "interfaces",
                                                "grey_floor", "u_error")}}
             self.stages.append(summary)
             log.info(f"fin du palier {stage + 1} ({summary['time_s']:.1f} s) : J PINN {h['J'][-1]:.4f}  "
                      f"J exact {snap['J_exact']:.4f}  J seuillé {snap['J_binary']:.4f} "
                      f"(vol {snap['vol_binary']:.3f})  gris {h['grey'][-1]:.3f} (plancher {snap['grey_floor']:.3f})  "
-                     f"{snap['interfaces_text']}  erreur u {snap['u_error']:.2e}")
+                     f"{snap['interfaces_text']}  erreur u {snap['u_error']:.2e}"
+                     + (f"  certificat Ritz u {h['cert_u'][-1]:.1e} p {h['cert_p'][-1]:.1e}" if self.ritz else ""))
             torch.save({"u": self.u_net.state_dict(), "rho": self.rho_net.state_dict(), "eps": self.eps,
                         "q": self.problem.q},
                        self.run_dir / "models" / f"stage_{stage:02d}.pt")

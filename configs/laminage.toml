@@ -40,6 +40,16 @@ lam = 1e-3            # N* = 9 couches, 18 interfaces, couche la plus fine ≈ 0
 beta = 1e2
 mu = 1e2
 form = "strong"       # "mixed" : réseau de flux σ, résidus div σ + f et |σ - A ∇u|² / A (sans dérivée de A)
+                      # "ritz" : u et l'adjoint p résolus à ρ fixé (Deep Ritz, gradient naturel), loss en ρ seul
+
+[ritz]
+# loss.form = "ritz" : avant chaque évaluation, u puis p par gradient naturel en énergie (Levenberg-Marquardt),
+# jusqu'à ||v - v*||_a / ||v||_a < tol (certificat exact en 1D, sur une quadrature de contrôle plus fine)
+tol = 1e-3
+max_iters = 50
+damping = 1e-10
+max_tries = 12
+check_refine = 2
 
 [continuation]
 # eps géométrique de eps0 à eps_min en n_stages paliers

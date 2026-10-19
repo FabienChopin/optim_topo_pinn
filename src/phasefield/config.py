@@ -44,8 +44,22 @@ class LossConfig:
     beta: float = 1e2
     mu: float = 1e2
     # "strong" : résidu fort -div(A grad u) - f ; "mixed" : flux sigma (réseau en plus),
-    # équilibre div sigma + f et relation de comportement int |sigma - A grad u|^2 / A (sans dérivée de A)
+    # équilibre div sigma + f et relation de comportement int |sigma - A grad u|^2 / A (sans dérivée de A) ;
+    # "ritz" (1D) : u et l'adjoint p résolus à rho fixé par Deep Ritz (section [ritz]), la loss ne porte que sur rho
     form: str = "strong"
+
+
+@dataclass
+class RitzConfig:
+    """loss.form = "ritz" : avant chaque évaluation de la loss en rho, u puis l'adjoint p sont résolus
+    par gradient naturel en énergie (ritz.py), en partant de la solution précédente, jusqu'à
+    ||v - v*||_a / ||v||_a < tol (certificat exact en 1D) ou max_iters pas. Pas acceptés et certificat
+    sur une quadrature de contrôle plus fine (le réseau ne peut pas tricher entre les points)."""
+    tol: float = 1e-3
+    max_iters: int = 50
+    damping: float = 1e-10    # amortissement minimal (Levenberg-Marquardt), relatif à la plus grande valeur propre de G
+    max_tries: int = 12       # amortissements essayés (× 10) avant d'abandonner le pas
+    check_refine: int = 2     # quadrature de contrôle (acceptation des pas, certificat) : n_elements × check_refine
 
 
 def _geometric(a: float, b: float, n: int) -> list[float]:
@@ -168,6 +182,7 @@ class Config:
     quadrature: QuadratureConfig = field(default_factory=QuadratureConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     loss: LossConfig = field(default_factory=LossConfig)
+    ritz: RitzConfig = field(default_factory=RitzConfig)
     continuation: ContinuationConfig = field(default_factory=ContinuationConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
