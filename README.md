@@ -62,6 +62,29 @@ Le test met tout à l'épreuve à la fois. λ fixe le nombre de couches visé. �
 
 Résultats (forme mixte, q = 99) : l'optimum relaxé est retrouvé (J ≈ 1e-4), mais le laminé ne naît pas. La descente sort du gris par la plus grande longueur d'onde, en un gros bloc. Avec la contrainte de densité locale (`[dehomogenization]`, ℓ = 1/3), le gros bloc est empêché, mais ρ reste gris. Un laminé imposé par projection est détruit au palier suivant : le réseau u ne représente pas un laminé à 18 interfaces (erreur sur u d'environ 0.4 à froid).
 
+## Banc d'essai 1D en JAX : `pinn1d.py`
+
+Script autonome, sans le paquet `phasefield`. Il sert à tester les limites de la méthode sur des cibles binaires à 1 à 6 interfaces.
+
+```bash
+uv pip install jax optax                                    # GPU : uv pip install "jax[cuda12]" optax
+python pinn1d.py --n-interfaces 1 --opt adam:2000 lbfgs:2000
+python pinn1d.py --interfaces 0.3 0.55 --opt ng:300          # positions explicites, Gauss-Newton
+python pinn1d.py --n-interfaces 3 --capacity-only
+display -update 2 runs1d/latest/live.png
+```
+
+- **Cible** : ρ* binaire, u* exact. En 1D, u détermine A(ρ), donc ρ* est l'unique optimum (J = 0). Problème identifiable.
+- **Loss** : forme forte, somme de carrés : J/J_ref, β résidu, λ Van der Waals, μ volume (μ = 0 par défaut).
+- **Optimiseurs**, enchaînés par `--opt nom:itérations` :
+  - `adam` et `lbfgs` (optax) : pas regroupés par `lax.scan` et compilés ;
+  - `ng` : gradient naturel de la loss de moindres carrés, c'est-à-dire Gauss-Newton amorti (Levenberg-Marquardt) sur u et ρ ensemble.
+- **Test de capacité**, lancé avant chaque entraînement :
+  - le réseau ρ est ajusté sur sigmoïde(d/ε) ;
+  - le réseau u est entraîné en forme forte à ρ = ρ_ε fixé.
+  - Verdict « OK » si l'erreur sur ρ est < 1e-2, le nombre d'interfaces est le bon, et l'erreur H¹ sur u est < 1e-2. Sinon, la topologie est hors de portée du réseau, quel que soit l'optimiseur. Résultat dans `capacity.png`.
+- **Positions par défaut** : 0,1 + 0,8 (k + 0,6)/N, jamais 0,5. À l'initialisation (biais nuls), le MLP tanh est impair en 2x − 1, et ρ croise 0,5 en x = 0,5.
+
 ## 2D
 
 ```bash

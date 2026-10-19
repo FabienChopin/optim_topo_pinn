@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["ruff>=0.5"]
+jax = ["jax>=0.4.30", "optax>=0.2.3"]   # pinn1d.py
 
 [project.scripts]
 phasefield-run = "phasefield.run:main"
