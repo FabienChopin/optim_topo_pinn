@@ -1,213 +1,91 @@
-# phasefield : optimisation topologique par champ de phase et PINN
+# pinn1d : limites de l'optimisation topologique par PINN, en 1D
 
-Problème, sur Ω = [0, 1]^d avec d = 1 ou 2 :
+Un seul script, `pinn1d.py`, en JAX. On se donne un design binaire ρ* à N interfaces, et l'on cherche à le retrouver par optimisation d'un PINN (réseau u) couplé à un champ de phase (réseau ρ). Le script répond à deux questions :
 
-```
-min_{u, ρ}  J = ∫_bande u² dx,  bande = [0.2, 0.3] × [0, 1]^(d-1)
-s.c.        -div(A(ρ) ∇u) = 1 sur Ω,  u = 0 sur ∂Ω
-            A(ρ) = A2 + (A1 - A2) ρ / (1 + q (1 - ρ)),  ρ ∈ [0, 1] (champ de phase, loi RAMP)
-```
-
-Les deux inconnues sont des réseaux : u est un PINN avec conditions au bord fortes,
-u = x (1 - x) N_u(x), et ρ = sigmoïde(N_ρ(x)). Les deux sont minimisés ensemble sur une seule loss :
-
-```
-L = J / J_ref
-  + β ∫ (-(A(ρ) u')' - 1)² dx                       résidu fort
-  + λ ∫ (ε |ρ'|² + ρ² (1 - ρ)² / ε) dx              Van der Waals
-  + μ (∫ ρ dx - V0)²                                volume
-```
-
-- J_ref est le J exact du matériau homogène ρ = V0.
-- Forme mixte (`loss.form = "mixed"`) : un réseau de plus porte le flux σ = A ∇u, et le résidu devient ∫ (div σ + f)² + ∫ |σ - A ∇u|² / A. Il n'y a plus de dérivée de A : la forme forte, qui contient ∇A · ∇u, est inutilisable dès qu'une interface est raide à fort contraste (test de laminage).
-- Forme de Ritz (`loss.form = "ritz"`, 1D, section `[ritz]`) : u n'est plus une inconnue de la loss. À chaque évaluation, u puis l'adjoint p sont résolus à ρ fixé, comme minimiseurs de ½ ∫ A(ρ) v'² - ∫ g v (g = f, puis g = ∂J/∂u), par gradient naturel en énergie : métrique G_ij = ∫ A(ρ) ∂_i v' ∂_j v', amortissement de Levenberg-Marquardt. On repart de la solution précédente. L'arrêt se fait sur un certificat de Prager-Synge, exact en 1D : ||v - v*||_a. Les pas sont acceptés sur une quadrature de contrôle plus fine, sinon le réseau triche entre les points. Le terme J devient le lagrangien J(u) - [∫ A u' p' - ∫ f p], u et p détachés, dont le gradient en ρ est le gradient réduit -∫ A'(ρ) u' p'. Adam et L-BFGS ne portent que sur ρ. `float64` est conseillé (matrice de Gram).
-- Les intégrales utilisent une quadrature de Gauss composite (1000 points par défaut). Les bornes de la bande sont alignées sur des bords d'éléments.
-- ε décroît par paliers géométriques : Adam au premier palier, puis L-BFGS à chaque palier.
-- Loi RAMP : q = 0 donne la loi linéaire (valeur par défaut). q = A1/A2 - 1 (= 99) donne la loi harmonique, c'est-à-dire des couches en série, le mélange exact en 1D. Au-delà, le gris est pénalisé. q peut monter par paliers : `continuation.q0`, `q_max`, `q_start`. Par exemple, `--set continuation.q_max=99 --set continuation.q_start=4` garde la loi linéaire pendant les 5 premiers paliers, puis monte q jusqu'à 99. J_ref reste calculé en loi linéaire (q = 0), pour que J/J_ref soit comparable d'un run à l'autre.
-- Continuation en phases (`continuation.q_values` non vide), pour faire apparaître les détails puis finir en noir et blanc :
-  1. **topologie** : `n_stages` paliers à q = `q0`, ε de `eps0` à `eps_topo` (≈ 2 à 3 `eps_min`). Le gris est permis et montre où l'optimum veut de la matière ;
-  2. **binarisation** : un palier par valeur de `q_values` (géométrique, l'effet de RAMP est logarithmique en q), à ε = `eps_topo`. Les zones grises se cassent en barres ;
-  3. **netteté** : `n_sharp_stages` paliers à q = `q_values[-1]`, ε de `eps_topo` à `eps_min` (≈ 1.5 × l'écart entre points).
-
-  `λ` fixe la taille des détails (Van der Waals ≈ λ/3 × périmètre) ; ε ne sert qu'à les rendre nets.
-  ```bash
-  python run.py --set continuation.eps_topo=1e-2 --set "continuation.q_values=[1, 3, 10, 30, 99, 300]" \
-                --set continuation.n_sharp_stages=3 --set continuation.n_stages=6
-  ```
-
-En 1D, la solution exacte est connue pour tout ρ (A u' = C - x). Elle sert à trois choses :
-- calculer J_ref ;
-- vérifier u et le vrai J du design courant pendant l'entraînement ;
-- calculer deux optimums de référence. L'**optimum binaire** est la cible : ρ ∈ {0, 1}, avec la position des interfaces optimisée. L'**optimum relaxé** autorise le gris ; il est calculé pour la loi finale (`q_max`, ou `q_values[-1]` en mode en phases). S'il est meilleur que le binaire, c'est que le gris est « moins cher » que tout design 0/1 avec cette loi A(ρ).
-
-## Test 1D de microstructure : laminage d'un matériau gris
-
-```bash
-python run.py --config configs/laminage.toml
-python run.py diagnose runs/latest
-```
-
-Avec l'objectif de bande, l'optimum 1D n'a que 2 interfaces : il n'y a pas de détail à découvrir. Ce test en a un :
-
-```
-J = ∫ (u - u*)² dx      (problem.objective = "target")
-```
-
-u* est la solution exacte pour une densité grise ρ* = V0 + amp sin(2π k x) en loi harmonique (`target_amp`, `target_periods`). En 1D, la loi harmonique (q = A1/A2 - 1) est le mélange exact en série. Cela donne trois références exactes :
-- **optimum relaxé** : ρ = ρ*, J = 0 ;
-- **binaire** : un laminé de N couches qui suit ρ* donne J(N) ≈ 0.227 / N² / J_ref. Plus il y a de couches, mieux c'est ;
-- **avec le périmètre** : chaque interface coûte λ/3 (Van der Waals d'un profil optimal). Le laminé optimal minimise J(N)/J_ref + λ/3 × interfaces, d'où N* = 5, 9, 19, 41 pour λ = 1e-2 … 1e-5.
-
-Le test met tout à l'épreuve à la fois. λ fixe le nombre de couches visé. ε doit être assez petit pour la couche la plus fine, d'épaisseur ≈ (V0 - amp) / N*. Il faut assez de points par interface, et un réseau ρ capable de représenter 2N* interfaces raides. Pour la loi : à q = 0, un gris lisse donne J = 0 sans interface ; à q = 99, gris et laminé sont équivalents ; au-delà, le gris est pénalisé. Enfin, l'optimiseur doit faire naître les couches.
-
-Résultats (forme mixte, q = 99) : l'optimum relaxé est retrouvé (J ≈ 1e-4), mais le laminé ne naît pas. La descente sort du gris par la plus grande longueur d'onde, en un gros bloc. Avec la contrainte de densité locale (`[dehomogenization]`, ℓ = 1/3), le gros bloc est empêché, mais ρ reste gris. Un laminé imposé par projection est détruit au palier suivant : le réseau u ne représente pas un laminé à 18 interfaces (erreur sur u d'environ 0.4 à froid).
-
-## Banc d'essai 1D en JAX : `pinn1d.py`
-
-Script autonome, sans le paquet `phasefield`. Il sert à tester les limites de la méthode sur des cibles binaires à 1 à 6 interfaces.
-
-```bash
-uv pip install jax optax                                    # GPU : uv pip install "jax[cuda12]" optax
-python pinn1d.py --n-interfaces 1 --opt adam:2000 lbfgs:2000
-python pinn1d.py --interfaces 0.3 0.55 --opt ng:300          # positions explicites, Gauss-Newton
-python pinn1d.py --n-interfaces 3 --capacity-only
-display -update 2 runs1d/latest/live.png
-```
-
-- **Cible** : ρ* binaire, u* exact. En 1D, u détermine A(ρ), donc ρ* est l'unique optimum (J = 0). Problème identifiable.
-- **Loss** : forme forte, somme de carrés : J/J_ref, β résidu, λ Van der Waals, μ volume (μ = 0 par défaut).
-- **Optimiseurs**, enchaînés par `--opt nom:itérations` :
-  - `adam` et `lbfgs` (optax) : pas regroupés par `lax.scan` et compilés ;
-  - `ng` : gradient naturel de la loss de moindres carrés, c'est-à-dire Gauss-Newton amorti (Levenberg-Marquardt) sur u et ρ ensemble.
-- **Test de capacité**, lancé avant chaque entraînement :
-  - le réseau ρ est ajusté sur sigmoïde(d/ε) ;
-  - le réseau u est entraîné en forme forte à ρ = ρ_ε fixé.
-  - Verdict « OK » si l'erreur sur ρ est < 1e-2, le nombre d'interfaces est le bon, et l'erreur H¹ sur u est < 1e-2. Sinon, la topologie est hors de portée du réseau, quel que soit l'optimiseur. Résultat dans `capacity.png`.
-- **Positions par défaut** : 0,1 + 0,8 (k + 0,6)/N, jamais 0,5. À l'initialisation (biais nuls), le MLP tanh est impair en 2x − 1, et ρ croise 0,5 en x = 0,5.
-
-## 2D
-
-```bash
-python run.py --config configs/2d.toml
-```
-
-La physique, le réseau et la loss sont les mêmes qu'en 1D. Ce qui change :
-- **Référence** : il n'y a plus de solution exacte. u et le vrai J du design courant sont vérifiés par un solveur volumes finis sur `output.n_grid`² cellules (`fv2d.py`). Les faces utilisent la moyenne harmonique de A et le bord est à une demi-maille du centre. Convergence à l'ordre 2 vérifiée sur le cas homogène, gradient adjoint vérifié par différences finies. J_ref vient du même solveur.
-- **Optimums de référence** : on ne peut plus les calculer exactement. Ils sont remplacés par une optimisation topologique classique par densité (filtre, RAMP avec continuation en q, gradient adjoint, section `[reference]`). La « référence binaire » est le meilleur design seuillé au volume V0. Elle est de bonne qualité, mais rien ne garantit que ce soit l'optimum.
-- **Figure** : elle montre les cartes de ρ (contour de la référence binaire en orange), de la référence, de u, et de l'écart entre u PINN et u volumes finis.
-- **Gris** : le plancher de gris devient 4ε × longueur d'interface.
-- **Coût** : il faut n² points de quadrature (300² = 90 000 par défaut), donc un GPU. `run.dtype = "float32"` est environ 5 fois plus rapide sur un GPU grand public (RTX). Garde `float64` sur un GPU de calcul (A100, H100).
+1. **Le réseau peut-il représenter la cible ?** C'est le test de capacité, fait avant l'entraînement.
+2. **L'optimiseur la retrouve-t-il ?** Il s'agit de retrouver le bon nombre d'interfaces, chacune à ε près.
 
 ## Installation
 
 ```bash
-# avec uv
-uv venv .venv && uv pip install -e ".[dev]"
-# sans uv
-python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev]"
+uv venv && uv pip install jax optax numpy matplotlib        # CPU
+uv pip install "jax[cuda12]"                                # GPU NVIDIA (en plus)
 ```
 
-**Sans installation** (supercalculateur, pas de pip) : il suffit d'avoir Python ≥ 3.11, torch, numpy, scipy et
-matplotlib, puis de remplacer `phasefield-run` par `python run.py` (à la racine du dépôt) dans les commandes
-ci-dessous. Le script ajoute `src/` au chemin de Python. Les runs vont dans `runs/` sous le dossier courant.
+JAX prend le GPU automatiquement s'il est disponible. `JAX_PLATFORMS=cpu` force le CPU.
+
+## Démarrage
 
 ```bash
-git clone -b phase-field-1d https://github.com/FabienChopin/optim_topo_pinn.git
-cd optim_topo_pinn
-python run.py --set run.seed=4
+python pinn1d.py                                  # 1 interface, Adam 2000 puis L-BFGS 2000
+display -update 2 runs1d/latest/live.png          # suivi en direct (ou tout visualiseur d'images)
 ```
 
-torch est pris sur PyPI. Pour une variante CPU seule ou une version précise de CUDA, installe torch d'abord :
-`pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+Le log affiche le verdict du test de capacité, une ligne par mise à jour de la figure, puis un verdict final : `TOPOLOGIE RETROUVÉE` (bon nombre d'interfaces, chacune à moins de ε de sa cible) ou `TOPOLOGIE NON RETROUVÉE`.
 
-## Lancer un run
+Exemples courants :
 
 ```bash
-phasefield-run                                         # configs/default.toml
-phasefield-run --set run.seed=4 --set loss.lam=1e-3    # surcharges section.cle=valeur
-phasefield-run --config configs/mon_essai.toml --set run.name=essai
+python pinn1d.py --n-interfaces 3                            # 3 interfaces réparties sur [0.1, 0.9]
+python pinn1d.py --interfaces 0.3 0.7                        # positions choisies
+python pinn1d.py --opt adam:2000 lbfgs:2000 ng:200           # enchaîner les optimiseurs
+python pinn1d.py --n-interfaces 6 --capacity-only            # seulement le test de capacité
+python pinn1d.py --width 40 --depth 4 --eps 5e-3             # réseau plus gros, interfaces plus fines
+python pinn1d.py --help                                      # toutes les options, avec leurs valeurs par défaut
 ```
 
-Tous les paramètres et leur rôle sont dans [`configs/default.toml`](configs/default.toml).
+## Le problème
 
-Suivi pendant l'entraînement : la figure est réécrite toutes les `output.plot_every` évaluations, de façon atomique.
+Sur ]0, 1[, avec u(0) = u(1) = 0 :
 
-```bash
-display -update 5 runs/latest/live.png
+```
+-(A(ρ) u')' = f,      A(ρ) = a2 + (a1 - a2) ρ / (1 + q (1 - ρ))      (RAMP)
 ```
 
-La figure contient six panneaux :
-- ρ(x), avec les deux optimums de référence ;
-- u PINN comparée à u exacte ;
-- les termes de la loss multipliés par leurs poids ;
-- J/J_ref : celui du PINN, le J exact du ρ courant, et le J exact du ρ seuillé à 0.5 ;
-- le volume et le gris ;
-- un résumé des paramètres et des indicateurs.
+- **Cible.** ρ* est binaire, avec des interfaces aux positions données. u* est sa solution exacte, calculée sur une grille fine.
+- **Identifiabilité.** En 1D, A u' = C − f x : u détermine A, donc ρ, point par point. ρ* est donc **l'unique optimum** (J = 0). Un échec vient de la méthode, jamais d'une ambiguïté du problème.
+- **Valeur de q.** Par défaut, q = a1/a2 − 1 = 99 : c'est la loi harmonique, le mélange exact en série. Le gris n'y est pas favorisé.
 
-Gris : G = ∫ 4ρ(1 - ρ) dx, qui vaut 0 si le design est binaire et 1 si ρ = 0.5 partout. Une interface diffuse au profil optimal sigmoïde(x/ε) coûte 4ε. Le « plancher » 4ε × (nombre d'interfaces) est donc le gris d'un design binaire aux interfaces diffuses.
+## La méthode
 
-## Résultats
+Réseaux : `u = x (1 - x) N_u(x)` (bords exacts), `ρ = sigmoïde(N_ρ(x))`, N = MLP tanh (`--width`, `--depth`).
 
-Chaque run crée un dossier `runs/<date>_<nom>_s<seed>/`, ignoré par git. `runs/latest` pointe toujours vers le dernier run. Le dossier contient :
+Loss en forme forte. C'est une somme de carrés, intégrée par quadrature de Gauss composite (`--elements` × `--gauss` points) :
 
-| Fichier | Contenu |
+```
+L = ∫ (u - u*)² / J_ref                      J_ref : J du matériau uniforme ρ = V*
+  + β ∫ (-(A(ρ) u')' - f)²                   résidu de l'EDP
+  + λ ∫ (ε ρ'² + ρ² (1 - ρ)² / ε)            Van der Waals : interfaces de largeur ~ 4.4 ε
+  + μ (∫ ρ - V*)²                            volume (μ = 0 par défaut, redondant ici)
+```
+
+Optimiseurs, enchaînés par `--opt nom:itérations` :
+
+| nom | méthode |
 |---|---|
-| `config.toml` | configuration complète effective, à réutiliser avec `--config` |
+| `adam` | Adam (optax), pas `--lr` |
+| `lbfgs` | L-BFGS (optax), recherche linéaire de Wolfe |
+| `ng` | gradient naturel de la loss de moindres carrés, c'est-à-dire Gauss-Newton amorti (Levenberg-Marquardt) sur u et ρ ensemble. Un pas coûte une Jacobienne complète : lent sur CPU, à réserver au GPU ou aux derniers pas. |
+
+## Le test de capacité
+
+Il est lancé avant chaque entraînement, sauf avec `--no-capacity`. Il se fait par Gauss-Newton, réseau par réseau :
+
+- **ρ** : le réseau est ajusté sur le profil cible ρ_ε = sigmoïde(d/ε), qui est le profil optimal de Van der Waals.
+- **u** : le réseau est entraîné en forme forte avec ρ = ρ_ε **fixé**, donné exactement et non par un réseau.
+
+Le verdict est « OK » si l'erreur L² relative sur ρ est < 1e-2 avec le bon nombre d'interfaces, et si l'erreur H¹ relative sur u est < 1e-2. Sinon, la topologie visée est **hors de portée** de ces réseaux, quel que soit l'optimiseur : il faut un réseau plus gros, ou un ε plus grand. Les ajustements obtenus sont dans `capacity.png`.
+
+## Sorties
+
+Chaque run va dans `runs1d/<date>_<nom>_s<seed>/`, et `runs1d/latest` pointe vers le dernier run.
+
+| fichier | contenu |
+|---|---|
+| `live.png` → `final.png` | ρ et u (réseau, cible, solution exacte du ρ courant), loss par terme, J exact, interfaces trouvées et erreur de position |
+| `capacity.png` | ajustements du test de capacité |
 | `log.txt` | journal |
-| `live.png`, `final.png` | figure de suivi, puis figure finale |
-| `metrics.json` | optimums de référence, bilan de chaque palier, état final |
-| `models/` | réseaux à la fin de chaque palier et à la fin du run |
+| `metrics.json` | capacité, dernier état, verdict (`found`) |
+| `config.json`, `params.npz` | options du run, paramètres finaux |
 
-Ctrl-C arrête proprement : l'état courant est sauvegardé.
-
-## Diagnostic a posteriori : qu'est-ce qui a limité ?
-
-```bash
-python run.py diagnose runs/latest              # ou phasefield-diagnose ; --stage 8, --device cuda
-```
-
-Les réseaux de chaque palier sont rechargés, sans réentraîner. Le tableau (aussi écrit dans `diagnose.json`) donne par palier :
-
-| Colonne | Mesure | Limitant si |
-|---|---|---|
-| `r` | netteté 1 / (4 ε \|∇ρ\|) sur ρ = 0.5 (1 = profil optimal sigmoïde(d / ε)) | (information) |
-| `r_fit` | netteté d'une copie du réseau ρ recalée sur sigmoïde(d / ε) | > 1.5 : **réseau ρ** |
-| `pts/if` | points de quadrature à travers une interface (4.4 ε / écart moyen) | < 4 : **points** |
-| `rés f/e`, `ΔVdW`, `ΔJ` | résidu, Van der Waals et J sur une quadrature plus fine / d'entraînement | > 2, > 5 % : **points** |
-| `excès` | gris - plancher 4 ε × interfaces | > 0.02 (et `r_fit` ≈ 1) : **loi (q)** si q < a1/a2 - 1, sinon **gris résiduel** (pénalisé mais pas résorbé) |
-| `détail` | plus petit détail en largeurs d'interface (4.4 ε) | < 3 : **ε** |
-| `plafond` | L-BFGS arrêté au nombre max d'itérations | oui : **optimiseur** |
-| `erreur u` | erreur L2 sur u (exacte en 1D, volumes finis en 2D) | > 1e-2 : **réseau u** |
-
-`r` grand avec `r_fit` ≈ 1 : le réseau saurait faire une interface nette, mais l'optimisation préfère une transition large, c'est-à-dire du gris.
-
-## Organisation
-
-```
-configs/default.toml        paramètres (1D)
-configs/2d.toml             paramètres (2D)
-configs/laminage.toml       test 1D de microstructure (objectif cible, laminé)
-src/phasefield/
-  config.py                 lecture TOML + surcharges
-  problem.py                problème 1D : A(ρ), source, bord, objectif, solution exacte
-  exact1d.py                solution exacte 1D pour A constant par morceaux
-  fv2d.py                   volumes finis 2D (solution de référence, gradient adjoint)
-  references.py             références : optimums exacts et laminés (1D), optimisation par densité (2D)
-  quadrature.py             Gauss composite sur [lo, hi]^d
-  operators.py              gradient et divergence par autograd (dimension d)
-  models.py                 MLP, u à bord fort, ρ = sigmoïde
-  losses.py                 loss totale
-  diagnostics.py            évaluation exacte du design courant
-  diagnose.py               diagnostic a posteriori d'un run (facteur limitant par palier)
-  plotting.py               figure de suivi
-  train.py                  paliers (ε, q), Adam puis L-BFGS
-  run.py                    point d'entrée, dossier du run
-```
-
-La physique (loi A, source, bord, objectif) est dans `BandProblem`. `BandProblem1D` et `BandProblem2D` y ajoutent leur solution de référence. Quadrature, opérateurs, réseaux et loss sont écrits en dimension d. Pour la 3D, il faut un solveur de référence 3D, puis les diagnostics et les panneaux de figure correspondants.
-
-## Développement
-
-```bash
-ruff check src
-```
+Une remarque sur les positions par défaut : avec `--n-interfaces N`, les interfaces sont en 0,1 + 0,8 (k + 0,6)/N et jamais en 0,5. À l'initialisation, les biais sont nuls, donc le MLP tanh est impair en 2x − 1 et ρ croise 0,5 en x = 0,5. Une cible centrée serait favorisée.

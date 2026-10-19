@@ -1,27 +1,13 @@
-"""Banc d'essai 1D (JAX) : retrouver un design binaire à N interfaces par PINN en forme forte.
+"""Banc d'essai 1D : retrouver par PINN un design binaire à N interfaces (voir README.md).
 
-    python pinn1d.py --interfaces 0.5 --opt adam:2000 lbfgs:2000
-    python pinn1d.py --n-interfaces 3 --opt ng:300
-    python pinn1d.py --n-interfaces 2 --capacity-only
-    display -update 2 runs1d/latest/live.png        # suivi en direct
+Exemples :
+    python pinn1d.py                                       # 1 interface, Adam puis L-BFGS
+    python pinn1d.py --n-interfaces 3                      # 3 interfaces réparties
+    python pinn1d.py --interfaces 0.3 0.7 --opt adam:2000 lbfgs:2000 ng:200
+    python pinn1d.py --n-interfaces 4 --capacity-only      # le réseau peut-il représenter la cible ?
 
-Problème inverse identifiable : rho* binaire (interfaces données), u* solution exacte de
-    -(A(rho) u')' = f sur ]0, 1[,  u(0) = u(1) = 0,  A = a2 + (a1 - a2) rho / (1 + q (1 - rho)).
-En 1D, A u' = C - f x : u détermine A point par point, donc rho* est l'unique optimum (J = 0).
-
-Loss (somme de carrés) :
-    L = int (u - u*)^2 / J_ref + beta int (-(A u')' - f)^2 + lam int (eps rho'^2 + rho^2 (1 - rho)^2 / eps)
-        + mu (int rho - V*)^2
-u = x (1 - x) N_u(x), rho = sigmoïde(N_rho(x)), N : MLP tanh.
-
-Optimiseurs, enchaînés par --opt nom:itérations : adam, lbfgs (optax, recherche linéaire zoom),
-ng : gradient naturel de la loss de moindres carrés = Gauss-Newton amorti (Levenberg-Marquardt, gain réel /
-prédit), sur u et rho ensemble.
-
-Test de capacité (avant l'entraînement, --capacity-only pour s'arrêter là) : le réseau rho est ajusté sur le
-profil cible rho_eps = sigmoïde(d / eps) (profil optimal de Van der Waals), et le réseau u est entraîné en forme
-forte à rho = rho_eps fixé (exact, pas un réseau). Si l'un échoue, la topologie visée est hors de portée du
-réseau, quel que soit l'optimiseur.
+Pendant le calcul : runs1d/latest/live.png est réécrite (ρ, u, loss, topologie).
+À la fin : runs1d/<date>_<nom>/ contient final.png, capacity.png, log.txt, metrics.json, config.json.
 """
 
 import argparse
@@ -146,7 +132,7 @@ class Loss:
     TERMS = ("J", "residual", "vdw", "volume")
 
     def __init__(self, pb: Problem, a, unravel):
-        x, w = gauss_composite(a.n_el, a.n_gauss)
+        x, w = gauss_composite(a.elements, a.gauss)
         self.x, self.sw = jnp.asarray(x), jnp.sqrt(jnp.asarray(w))
         self.w = jnp.asarray(w)
         self.u_star = jnp.asarray(pb.interp(pb.u_star_nodes, x))
@@ -280,7 +266,7 @@ def evaluate(pb: Problem, theta, unravel):
 # --- test de capacité ---
 def capacity(pb: Problem, a, key, log):
     """rho : moindres carrés sur rho_eps ; u : forme forte à rho = rho_eps fixé. Levenberg-Marquardt."""
-    x, w = gauss_composite(a.n_el, a.n_gauss)
+    x, w = gauss_composite(a.elements, a.gauss)
     xj, sw = jnp.asarray(x), jnp.sqrt(jnp.asarray(w))
     target = jnp.asarray(pb.profile(x))
     k1, k2 = jax.random.split(key)
@@ -404,39 +390,48 @@ def draw(path, pb, snap, hist, checks, title, summary):
 
 
 # --- programme ---
+class _Formatter(argparse.RawDescriptionHelpFormatter, argparse.ArgumentDefaultsHelpFormatter):
+    pass
+
+
 def parse(argv=None):
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    g = p.add_argument_group("cible")
-    g.add_argument("--interfaces", type=float, nargs="*", default=None, help="positions des interfaces de ρ*")
-    g.add_argument("--n-interfaces", type=int, default=1, help="sinon : N interfaces en 0.1 + 0.8 (k + 0.6) / N")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=_Formatter)
+    g = p.add_argument_group("cible (ρ* binaire, u* exact)")
+    g.add_argument("--n-interfaces", type=int, default=1, metavar="N",
+                   help="N interfaces en 0.1 + 0.8 (k + 0.6) / N (jamais en 0.5)")
+    g.add_argument("--interfaces", type=float, nargs="+", default=None, metavar="X",
+                   help="positions explicites des interfaces (remplace --n-interfaces)")
     g.add_argument("--first-phase", type=int, default=1, choices=(0, 1), help="phase de ρ* en x = 0")
-    g = p.add_argument_group("physique")
-    g.add_argument("--a1", type=float, default=1.0)
-    g.add_argument("--a2", type=float, default=0.01)
-    g.add_argument("--q", type=float, default=99.0, help="RAMP ; 99 = loi harmonique (gris non favorisé)")
-    g.add_argument("--source", type=float, default=1.0)
-    g = p.add_argument_group("loss")
-    g.add_argument("--eps", type=float, default=1e-2)
-    g.add_argument("--lam", type=float, default=1e-3)
-    g.add_argument("--beta", type=float, default=1e2)
-    g.add_argument("--mu", type=float, default=0.0, help="volume (redondant pour ce problème inverse)")
+    g = p.add_argument_group("physique : -(A(ρ) u')' = f, A = a2 + (a1 - a2) ρ / (1 + q (1 - ρ))")
+    g.add_argument("--a1", type=float, default=1.0, help="conductivité de la phase ρ = 1")
+    g.add_argument("--a2", type=float, default=0.01, help="conductivité de la phase ρ = 0")
+    g.add_argument("--q", type=float, default=99.0, help="RAMP ; a1/a2 - 1 = loi harmonique (gris non favorisé)")
+    g.add_argument("--source", type=float, default=1.0, help="f")
+    g = p.add_argument_group("loss : J/J_ref + β résidu + λ Van der Waals + μ volume")
+    g.add_argument("--eps", type=float, default=1e-2, help="ε, largeur d'interface (≈ 4.4 ε de 10 à 90 %%)")
+    g.add_argument("--lam", type=float, default=1e-3, help="λ, Van der Waals")
+    g.add_argument("--beta", type=float, default=1e2, help="β, résidu de l'EDP (forme forte)")
+    g.add_argument("--mu", type=float, default=0.0, help="μ, volume (redondant pour ce problème inverse)")
     g = p.add_argument_group("discrétisation")
-    g.add_argument("--n-el", type=int, default=100)
-    g.add_argument("--n-gauss", type=int, default=10)
-    g.add_argument("--width", type=int, default=20)
-    g.add_argument("--depth", type=int, default=3)
+    g.add_argument("--elements", type=int, default=100, help="éléments de la quadrature de Gauss composite")
+    g.add_argument("--gauss", type=int, default=10, help="points de Gauss par élément")
+    g.add_argument("--width", type=int, default=20, help="neurones par couche (réseaux u et ρ)")
+    g.add_argument("--depth", type=int, default=3, help="couches cachées tanh")
     g = p.add_argument_group("optimisation")
-    g.add_argument("--opt", nargs="+", default=["adam:2000", "lbfgs:2000"], help="phases nom:itérations")
-    g.add_argument("--lr", type=float, default=1e-3)
-    g.add_argument("--lbfgs-memory", type=int, default=50)
+    g.add_argument("--opt", nargs="+", default=["adam:2000", "lbfgs:2000"], metavar="NOM:ITER",
+                   help="phases enchaînées ; NOM = adam, lbfgs ou ng (Gauss-Newton amorti)")
+    g.add_argument("--lr", type=float, default=1e-3, help="pas d'Adam")
+    g.add_argument("--lbfgs-memory", type=int, default=50, help="historique de L-BFGS")
     g.add_argument("--seed", type=int, default=0)
-    g.add_argument("--capacity-iters", type=int, default=300)
-    g.add_argument("--capacity-only", action="store_true")
-    g.add_argument("--no-capacity", action="store_true")
+    g = p.add_argument_group("test de capacité (avant l'entraînement)")
+    g.add_argument("--capacity-only", action="store_true", help="faire le test puis s'arrêter")
+    g.add_argument("--no-capacity", action="store_true", help="sauter le test")
+    g.add_argument("--capacity-iters", type=int, default=300, help="pas de Gauss-Newton maximum par réseau")
     g = p.add_argument_group("sorties")
-    g.add_argument("--name", default="")
-    g.add_argument("--out", default="runs1d")
-    g.add_argument("--plot-every", type=int, default=200, help="itérations (adam, lbfgs) ; ng : / 20")
+    g.add_argument("--name", default="", help="nom du run (défaut : n<nombre d'interfaces>)")
+    g.add_argument("--out", default="runs1d", help="dossier des runs")
+    g.add_argument("--plot-every", type=int, default=200,
+                   help="itérations entre deux mises à jour de live.png (ng : divisé par 20)")
     return p.parse_args(argv)
 
 
@@ -459,11 +454,12 @@ def main(argv=None):
         log_file.write(line + "\n")
         log_file.flush()
 
-    log(f"run : {run_dir}   appareil : {jax.devices()[0]}")
+    log(f"run : {run_dir}   appareil : {jax.devices()[0]}   suivi : {run_dir / 'live.png'}")
     log(f"cible : interfaces {np.round(pb.interfaces, 4).tolist()}, V* = {pb.volume:.4f}, J_ref = {pb.j_ref:.4e}")
     key = jax.random.PRNGKey(a.seed)
     metrics = {}
     if not a.no_capacity:
+        log("test de capacité : ajustement des réseaux sur la cible (environ 1 min sur CPU)")
         cap, fig = capacity(pb, a, jax.random.fold_in(key, 1), log)
         fig.savefig(run_dir / "capacity.png", dpi=80)
         plt.close(fig)
@@ -478,7 +474,7 @@ def main(argv=None):
     hist = {"terms": [], "phase_starts": []}
     checks = []
     t0 = time.time()
-    phase_name = ""
+    phase_name = "init"
 
     def report():
         snap = evaluate(pb, theta, unravel)
@@ -494,7 +490,7 @@ def main(argv=None):
             f"cible : {len(pb.interfaces)} interface(s) en {np.round(pb.interfaces, 3).tolist()}",
             f"A = {a.a2:g} + {a.a1 - a.a2:g} ρ / (1 + {a.q:g} (1 - ρ)),  f = {a.source:g}",
             f"ε = {a.eps:g}   λ = {a.lam:g}   β = {a.beta:g}   μ = {a.mu:g}",
-            f"points : {a.n_el} x {a.n_gauss} Gauss   réseaux : {a.width} x {a.depth} tanh",
+            f"points : {a.elements} x {a.gauss} Gauss   réseaux : {a.width} x {a.depth} tanh",
             f"optimiseurs : {' '.join(a.opt)}",
             *([f"capacité : {'OK' if metrics['capacity']['ok'] else 'HORS DE PORTÉE'} "
                f"(ρ {metrics['capacity']['rho_error']:.1e}, u H1 {metrics['capacity']['u_error_h1']:.1e})"]
@@ -541,15 +537,17 @@ def main(argv=None):
                     report()
         else:
             raise ValueError(f"optimiseur inconnu : {phase_name!r} (adam, lbfgs, ng)")
-    snap = report()
+    snap = evaluate(pb, theta, unravel)   # état déjà tracé par le dernier report()
     np.savez(run_dir / "params.npz", theta=np.asarray(theta))
-    metrics["final"] = checks[-1]
+    found = snap["interfaces"] == len(pb.interfaces) and snap["position_error"] < a.eps
+    metrics["final"] = {**checks[-1], "found": bool(found)}
     metrics["time_s"] = time.time() - t0
     (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2, default=float))
     os.replace(run_dir / "live.png", run_dir / "final.png")
     (run_dir / "live.png").symlink_to("final.png")
-    log(f"terminé en {metrics['time_s']:.0f} s : J exact {snap['J_exact']:.3e}, {snap['interfaces']} interfaces, "
-        f"position {snap['position_error']:.2e}")
+    log(f"terminé en {metrics['time_s']:.0f} s : {'TOPOLOGIE RETROUVÉE' if found else 'TOPOLOGIE NON RETROUVÉE'} "
+        f"({snap['interfaces']}/{len(pb.interfaces)} interfaces, erreur de position {snap['position_error']:.2e} "
+        f"pour ε = {a.eps:g}, J exact {snap['J_exact']:.3e})   -> {run_dir / 'final.png'}")
 
 
 if __name__ == "__main__":
