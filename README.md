@@ -1,115 +1,93 @@
-# pinn2d : limites de l'optimisation topologique par PINN, en 2D
+# phasefield : optimisation topologique par champ de phase et PINN, en JAX
 
-Un seul script, `pinn2d.py`, en JAX. C'est la transposition en 2D du banc 1D (branche `limites-1d`). On se donne un design binaire ρ* fait de N disques, et l'on cherche à le retrouver par optimisation d'un PINN (réseau u) couplé à un champ de phase (réseau ρ). Le script répond à deux questions :
-
-1. **Le réseau peut-il représenter la cible ?** C'est le test de capacité, fait avant l'entraînement.
-2. **L'optimiseur la retrouve-t-il ?** Il s'agit de retrouver la bonne topologie (composantes, trous), avec des interfaces à moins de ε des cercles cibles.
-
-## Installation
-
-```bash
-uv venv && uv pip install jax optax numpy scipy matplotlib  # CPU (matplotlib : pour les figures)
-uv pip install "jax[cuda12]"                                # GPU NVIDIA (en plus)
-```
-
-JAX prend le GPU automatiquement s'il est disponible. `JAX_PLATFORMS=cpu` force le CPU. Les valeurs par défaut sont dimensionnées pour un GPU. Sur CPU, il faut réduire `--elements`, `--width` et `--fine`.
-
-## Démarrage
-
-```bash
-python pinn2d.py                                  # 1 disque, Adam 2000 puis L-BFGS 2000
-python plot2d.py runs2d/latest --watch            # dans un autre terminal : figure mise à jour en direct
-```
-
-Le log affiche le verdict du test de capacité, une ligne par mise à jour, puis un verdict final : `TOPOLOGIE RETROUVÉE` ou `TOPOLOGIE NON RETROUVÉE`.
-
-Exemples courants :
-
-```bash
-python pinn2d.py --n-disks 4                                  # 4 disques sur une grille décalée
-python pinn2d.py --disks 0.3 0.35 0.15  0.68 0.6 0.2          # disques choisis (cx cy r, en triplets)
-python pinn2d.py --opt adam:2000 lbfgs:2000 ng:50             # enchaîner les optimiseurs
-python pinn2d.py --n-disks 4 --capacity-only                  # seulement le test de capacité
-python pinn2d.py --width 60 --depth 4 --eps 2e-2              # réseau plus gros, interfaces plus larges
-python pinn2d.py --help                                       # toutes les options, avec leurs valeurs par défaut
-```
+C'est la réécriture en JAX de la branche `phase-field-1d` (PyTorch), dans le style des bancs `limites-1d` et `limites-2d` : un script de calcul, `phasefield.py`, et un script de figures, `plotphase.py`. On y ajoute le gradient naturel (`ng`).
 
 ## Le problème
 
-Sur ]0, 1[², avec u = 0 au bord :
+Sur Ω = [0, 1]^d, avec d = 1 ou 2 :
 
 ```
--div(A(ρ) ∇u) = f,      A(ρ) = a2 + (a1 - a2) ρ / (1 + q (1 - ρ))      (RAMP)
+min_{u, ρ}  J = ∫_bande u²,  bande = [0.2, 0.3] × [0, 1]^(d-1)
+s.c.        -div(A(ρ) ∇u) = f sur Ω,  u = 0 sur ∂Ω,  ∫ρ = V0
+            A(ρ) = a2 + (a1 - a2) ρ / (1 + q (1 - ρ))      (RAMP)
 ```
 
-- **Cible.** ρ* vaut 1 (bon conducteur, a1) dans les disques et 0 (a2 = a1/100) dans la matrice. Les disques doivent être disjoints et intérieurs au carré. Sa topologie est notée (composantes, trous) = (N, 0).
-- **Référence.** u* et la solution exacte du ρ courant sont calculées par éléments finis P1 sur une grille fine (`--fine` × `--fine` carrés coupés en deux triangles, A constant par carré), avec scipy.sparse.
-- **Identifiabilité.** Contrairement au 1D, un seul chargement ne détermine plus A partout. ∇·(A ∇u*) = −f est une équation de transport pour A le long de ∇u*, qui dégénère là où ∇u* = 0. ρ* reste un optimum (J = 0), mais rien ne garantit qu'il soit le seul. Un échec peut donc venir du problème lui-même et pas seulement de la méthode. On le voit dans la figure : J exact petit avec ρ loin de ρ*.
-- **Valeur de q.** Par défaut, q = a1/a2 − 1 = 99 : c'est la loi harmonique. Le gris n'y est pas favorisé.
-
-## La méthode
-
-Réseaux : `u = x (1-x) y (1-y) N_u(x, y)` (bords exacts), `ρ = sigmoïde(N_ρ(x, y))`, N = MLP tanh (`--width`, `--depth`).
-
-Loss en forme forte. C'est une somme de carrés, intégrée par quadrature de Gauss composite tensorisée (`--elements`² éléments × `--gauss`² points) :
+Réseaux : `u = Π x_i (1 - x_i) N_u(x)` (bords exacts), `ρ = sigmoïde(N_ρ(x))`, initialisé presque uniforme à V0. Les deux sont minimisés ensemble sur une seule loss de moindres carrés, intégrée par quadrature de Gauss composite tensorisée :
 
 ```
-L = ∫ (u - u*)² / J_ref                      J_ref : J du matériau uniforme ρ = V*
-  + β ∫ (-div(A(ρ) ∇u) - f)²                 résidu de l'EDP
-  + λ ∫ (ε |∇ρ|² + ρ² (1 - ρ)² / ε)          Van der Waals : interfaces de largeur ~ 4.4 ε
-  + μ (∫ ρ - V*)²                            volume (μ = 0 par défaut)
+L = J / J_ref
+  + β ∫ (-div(A(ρ) ∇u) - f)²                        résidu fort
+  + λ ∫ (ε |∇ρ|² + ρ² (1 - ρ)² / ε)                 Van der Waals
+  + μ (∫ρ - V0)²                                    volume
 ```
 
-Optimiseurs, enchaînés par `--opt nom:itérations` :
+- J_ref est le J du matériau homogène ρ = V0 en loi linéaire (q = 0), pour que J/J_ref soit comparable d'un run à l'autre.
+- **Paliers** : ε décroît géométriquement de `--eps0` à `--eps-min` en `--n-stages` paliers. q vaut `--q0` jusqu'au palier `--q-start`, puis monte linéairement jusqu'à `--q-max`. q = 0 donne la loi linéaire. q = a1/a2 − 1 = 99 donne la loi harmonique, le mélange exact en série en 1D. Au-delà, le gris est pénalisé. ε et q sont des arguments des fonctions compilées : changer de palier ne recompile rien.
+
+## Optimiseurs
+
+`--opt0` s'exécute au premier palier seulement (défaut : `adam:2000`), puis `--opt` à chaque palier (défaut : `lbfgs:1000`). Les deux options acceptent un enchaînement de `nom:itérations` :
 
 | nom | méthode |
 |---|---|
 | `adam` | Adam (optax), pas `--lr` |
 | `lbfgs` | L-BFGS (optax), recherche linéaire de Wolfe |
-| `ng` | gradient naturel de la loss de moindres carrés, c'est-à-dire Gauss-Newton amorti (Levenberg-Marquardt) sur u et ρ ensemble. En 2D, la Jacobienne complète ne tient pas en mémoire. JᵀJ (taille θ², environ 10⁴ × 10⁴ pour les réseaux par défaut) est accumulé par paquets de `--chunk` points. À réserver au GPU et aux derniers pas. |
+| `ng` | **gradient naturel** de la loss de moindres carrés, c'est-à-dire Gauss-Newton amorti (Levenberg-Marquardt) sur u et ρ ensemble : (JᵀJ + μ I) d = Jᵀr, avec un amortissement adapté au gain. JᵀJ (taille θ²) est accumulé par paquets de `--chunk` points, et la Jacobienne complète n'est jamais formée. Un pas coûte de l'ordre de (nombre de points) × θ² : à réserver aux derniers pas, et au GPU en 2D. |
 
-## Le test de capacité
+Les quatre termes de la loss sont des sommes de carrés, volume compris (un résidu global). Le gradient naturel s'applique donc à la loss entière.
 
-Il est lancé avant chaque entraînement, sauf avec `--no-capacity`. Il se fait par Gauss-Newton, réseau par réseau :
-
-- **ρ** : le réseau est ajusté sur ρ_ε = sigmoïde(d/ε), où d est la distance signée aux cercles.
-- **u** : le réseau est entraîné en forme forte avec ρ = ρ_ε **fixé**, donné exactement et non par un réseau.
-
-Le verdict est « OK » si l'erreur L² relative sur ρ est < 1e-2 avec la bonne topologie, et si l'erreur H¹ relative sur u (comparée à la solution EF pour ρ_ε) est < 1e-2. Sinon, la cible est **hors de portée** de ces réseaux.
-
-## Diagnostics et verdict
-
-À chaque mise à jour, sur la grille fine :
-
-- **J exact** : J de la solution EF pour le ρ du réseau. C'est le vrai objectif, et non celui que voit le PINN.
-- **Topologie** de {ρ > ½} : nombre de composantes (8-connexité) et de trous, c'est-à-dire les composantes du complémentaire, en 4-connexité, qui ne touchent pas le bord.
-- **Hausdorff** : distance de Hausdorff entre l'isoligne ρ = ½ et les cercles cibles.
-
-`TOPOLOGIE RETROUVÉE` demande la topologie de la cible **et** une distance de Hausdorff < ε.
-
-## Figures et suivi : `plot2d.py`
-
-`pinn2d.py` n'a pas besoin de matplotlib. À chaque mise à jour, il écrit l'état courant dans `live.npz` : ρ, u, u exact, u* sur la grille fine sous-échantillonnée d'un facteur 2, plus les loss et la topologie. `plot2d.py` en tire les figures, sur la machine qui calcule ou sur une autre. Il ne demande que numpy et matplotlib.
+## Démarrage
 
 ```bash
-python plot2d.py runs2d/latest                    # une fois : live.png et capacity.png dans le dossier
-python plot2d.py runs2d/latest --watch            # fenêtre redessinée à chaque nouvel état, jusqu'à la fin
-python plot2d.py runs2d/latest --watch --png      # sans affichage graphique : réécrit live.png
+uv venv && uv pip install jax optax numpy scipy matplotlib
+python phasefield.py                               # 1D
+python plotphase.py runs/latest --watch            # dans un autre terminal : figure en direct
 ```
 
-**Calcul ailleurs (container GPU).** Il suffit de copier `live.npz` (et `capacity.npz`) du run vers le PC. `plot2d.py --watch` sur le dossier de destination redessine à chaque nouvelle version. Les écritures sont atomiques.
+Exemples :
+
+```bash
+python phasefield.py --opt lbfgs:1000 ng:20                  # gradient naturel en fin de chaque palier
+python phasefield.py --opt0 adam:2000 ng:50 --opt ng:30      # gradient naturel seul après Adam
+python phasefield.py --q-max 99 --q-start 4                  # loi linéaire 5 paliers, puis montée vers l'harmonique
+python phasefield.py --dim 2                                 # 2D (GPU conseillé)
+python phasefield.py --dim 2 --float32                       # ~5x plus rapide sur GPU grand public (RTX)
+python phasefield.py --help                                  # toutes les options, avec leurs valeurs par défaut
+```
+
+Les valeurs par défaut dépendent de la dimension :
+
+| option | 1D | 2D |
+|---|---|---|
+| `--elements` × `--gauss` | 100 × 10 | (100 × 3)² = 90 000 points |
+| `--width` × `--depth` | 20 × 3 | 32 × 3 |
+| `--eps-min`, `--n-stages` | 4e-3, 10 | 8e-3, 8 |
+
+## Références et diagnostics
+
+Une solution de référence, indépendante du PINN, évalue le design courant à chaque mise à jour :
+
+- **1D** : solution exacte pour A constant par morceaux (A u' = C − f x) sur `--n-exact` cellules.
+- **2D** : volumes finis à 5 points sur `--n-grid`² cellules, avec moyenne harmonique de A aux faces.
+
+On en tire J exact (ρ du réseau), J du ρ seuillé à ½, le volume seuillé, l'erreur sur u, et le plancher de gris 4ε × (nombre d'interfaces en 1D, périmètre en 2D). Le gris G = ∫4ρ(1 − ρ) vaut 0 pour un design binaire.
+
+Les optimums de référence sont calculés avant l'entraînement (`--no-references` pour s'en passer) :
+
+- **1D** : l'**optimum binaire**, la cible, avec des positions d'interfaces optimisées par SLSQP depuis plusieurs départs. L'**optimum relaxé** autorise le gris, pour la loi finale q = `--q-max`. Il est calculé par gradient projeté, avec un gradient JAX à travers la solution exacte.
+- **2D** : optimisation par densité classique, sur `--ref-cells`² cellules : filtre, RAMP avec continuation en q, gradient adjoint, L-BFGS-B avec lagrangien augmenté pour le volume. La « référence binaire » est le meilleur design seuillé au volume V0. Rien ne garantit que ce soit l'optimum.
 
 ## Sorties
 
-Chaque run va dans `runs2d/<date>_<nom>_s<seed>/`, et `runs2d/latest` pointe vers le dernier run.
+Chaque run va dans `runs/<date>_<nom>_s<seed>/`, et `runs/latest` pointe vers le dernier run. Ctrl-C arrête proprement en sauvegardant l'état courant.
 
 | fichier | contenu |
 |---|---|
-| `live.npz` | état courant : champs ρ et u, loss par terme, J exact, topologie, Hausdorff. Marqué final à la fin du run. |
-| `capacity.npz` | ajustements du test de capacité |
+| `live.npz` | état courant : ρ, u PINN, u de référence, historique des termes, diagnostics, références. Marqué final à la fin du run. |
 | `log.txt` | journal |
-| `metrics.json` | capacité, dernier état, verdict (`found`) |
-| `config.json`, `params.npz` | options du run, paramètres finaux |
-| `live.png`, `capacity.png`, `final.png` | figures |
+| `metrics.json` | références, bilan de chaque palier, état final |
+| `config.json` | options du run |
+| `params/stage_XX.npz`, `params/final.npz` | paramètres θ des réseaux, avec ε et q |
+| `live.png`, `final.png` | figures, écrites par `plotphase.py`, ou par `phasefield.py` si matplotlib est présent |
 
-Une remarque sur les positions par défaut : avec `--n-disks N`, les disques sont sur une grille k × k décalée (k = ⌈√N⌉), et aucun n'est centré en (0,5 ; 0,5). À l'initialisation, les biais sont nuls, donc le MLP tanh est impair en (2x − 1, 2y − 1). Une cible centrée serait favorisée.
+`plotphase.py` ne demande que numpy et matplotlib. Pour un calcul sur un container GPU, il suffit de copier `live.npz` sur le PC et de lancer `python plotphase.py <dossier> --watch`.

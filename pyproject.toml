@@ -1,7 +1,7 @@
 [project]
-name = "pinn2d"
+name = "phasefield"
 version = "0.1.0"
-description = "Banc d'essai 2D : retrouver par PINN un design binaire à N inclusions disques"
+description = "Optimisation topologique par champ de phase et PINN, en JAX (1D, 2D)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-plot = ["matplotlib>=3.8"]   # plot2d.py (et figures écrites par pinn2d.py sur place)
+plot = ["matplotlib>=3.8"]   # plotphase.py (et figures écrites par phasefield.py sur place)
 
 [tool.ruff]
 line-length = 120
