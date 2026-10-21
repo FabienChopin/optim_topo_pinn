@@ -91,8 +91,10 @@ class Problem:
         return self.a2 + (self.a1 - self.a2) * rho / (1.0 + self.q * (1.0 - rho))
 
     def sdist(self, x, y, xp=np):
-        """Distance signée au bord de l'union des disques (> 0 dedans), exacte pour des disques disjoints."""
-        d = [r - xp.sqrt((x - cx) ** 2 + (y - cy) ** 2) for (cx, cy), r in zip(self.centers, self.radii, strict=True)]
+        """Distance signée au bord de l'union des disques (> 0 dedans), exacte pour des disques disjoints.
+        Le 1e-30 évite une dérivée NaN au centre exact d'un disque (point de Gauss au milieu d'un élément)."""
+        d = [r - xp.sqrt((x - cx) ** 2 + (y - cy) ** 2 + 1e-30)
+             for (cx, cy), r in zip(self.centers, self.radii, strict=True)]
         return d[0] if len(d) == 1 else xp.max(xp.stack(d), axis=0)
 
     def binary(self, pts):
@@ -561,6 +563,9 @@ def main(argv=None):
         + ("" if plot2d is None else f"   (ou l'image {run_dir / 'live.png'})"))
     log(f"cible : disques (cx, cy, r) {disks}, (composantes, trous) = {pb.target_betti}, "
         f"V* = {pb.volume:.4f}, J_ref = {pb.j_ref:.4e}")
+    if pb.h > 0.4 * a.eps:   # Hausdorff mesuré à ~0.65 h près : au-delà, plus d'un quart de la tolérance ε
+        log(f"attention : grille de référence trop grossière pour ε = {a.eps:g} (h = {pb.h:.1e}, Hausdorff mesuré "
+            f"à ~{0.65 * pb.h:.1e} près) ; prendre --fine {int(np.ceil(2.5 / a.eps))} ou plus")
     key = jax.random.PRNGKey(a.seed)
     metrics = {}
     if not a.no_capacity:
