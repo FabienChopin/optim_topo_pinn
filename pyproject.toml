@@ -1,17 +1,18 @@
 [project]
-name = "pinn1d"
+name = "pinn2d"
 version = "0.1.0"
-description = "Banc d'essai 1D : retrouver par PINN un design binaire à N interfaces"
+description = "Banc d'essai 2D : retrouver par PINN un design binaire à N inclusions disques"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "jax>=0.4.30",
     "optax>=0.2.3",
     "numpy>=1.26",
+    "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
-plot = ["matplotlib>=3.8"]   # plot1d.py (et figures écrites par pinn1d.py sur place)
+plot = ["matplotlib>=3.8"]   # plot2d.py (et figures écrites par pinn2d.py sur place)
 
 [tool.ruff]
 line-length = 120
